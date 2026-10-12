@@ -1,68 +1,67 @@
 import streamlit as st
-import pandas as pd
 import plotly.express as px
-from components.kpi_cards import render_kpi_card
+from datetime import datetime
+from config.settings import DATE_FILTER_OPTIONS, PRIMARY_BLUE
+from components.kpi_cards import render_kpi_cards
 from components.data_tables import render_interactive_table
 
-def render_admin_portal(db_adapter, user):
-    st.title(" Admin Control Center & Analytics")
-    
-    # Global Date Range Preset Filters
-    st.markdown("### Date Filter Presets")
-    filter_option = st.selectbox(
-        "Select Performance Time Horizon",
-        ["10 Days", "15 Days", "1 Month", "3 Months", "4 Months", "6 Months", "9 Months", "12 Months", "Custom Date Range"]
-    )
-    if filter_option == "Custom Date Range":
-        col_d1, col_d2 = st.columns(2)
-        with col_d1:
-            st.date_input("Start Date")
-        with col_d2:
-            st.date_input("End Date")
+def render_admin_portal(db, current_user: dict):
+    st.title("🛡️ Admin & Analytics Control Center")
+    st.caption("System Performance, SLA Monitoring & User Governance")
 
-    tab1, tab2, tab3 = st.tabs(["System Performance", "Employee SLA & Turnaround", "User Management"])
-    
+    st.selectbox("📅 Reporting Timeframe", DATE_FILTER_OPTIONS, index=2)
+    st.divider()
+
+    df_leads = db.fetch_all("leads_data")
+    df_quotes = db.fetch_all("quotation_sheet")
+    df_users = db.fetch_all("users")
+
+    kpis = [
+        {"label": "Total System Leads", "value": len(df_leads)},
+        {"label": "Quotations Drafted", "value": len(df_quotes)},
+    ]
+    render_kpi_cards(kpis)
+    st.divider()
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.subheader("📊 Lead Sources Distribution")
+        if not df_leads.empty and "source" in df_leads.columns:
+            source_counts = df_leads["source"].value_counts().reset_index()
+            source_counts.columns = ["Source", "Count"]
+            fig1 = px.pie(source_counts, values="Count", names="Source")
+            st.plotly_chart(fig1, use_container_width=True)
+
+    with c2:
+        st.subheader("⏱️ SLA Cutoff Distribution")
+        if not df_quotes.empty and "is_after_cutoff" in df_quotes.columns:
+            sla_counts = df_quotes["is_after_cutoff"].value_counts().reset_index()
+            sla_counts.columns = ["After 5:30 PM Cutoff", "Count"]
+            fig2 = px.bar(sla_counts, x="After 5:30 PM Cutoff", y="Count")
+            st.plotly_chart(fig2, use_container_width=True)
+
+    st.divider()
+    st.subheader("👥 User Management & RBAC")
+    tab1, tab2 = st.tabs(["Directory", "Add User"])
     with tab1:
-        q_df = db_adapter.fetch_table("quotation_sheet")
-        l_df = db_adapter.fetch_table("leads_data")
-        
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            render_kpi_card("Total Pipeline Value", "₹48,50,000", color="#10B981")
-        with c2:
-            render_kpi_card("Total Active Leads", str(len(l_df)))
-        with c3:
-            render_kpi_card("Overnight Submissions (>5:30 PM)", "12", color="#F59E0B")
-            
-        if not l_df.empty and "source" in l_df:
-            fig = px.pie(l_df, names="source", title="Lead Generation by Source Breakdown")
-            st.plotly_chart(fig, use_container_width=True)
-
+        render_interactive_table(df_users, key="admin_users_table")
     with tab2:
-        st.subheader("Employee SLA Compliance & Processing Speed")
-        q_df = db_adapter.fetch_table("quotation_sheet")
-        render_interactive_table(q_df, "admin_sla_table")
+        with st.form("add_user_form"):
+            u_id = st.text_input("User ID (e.g., U109)")
+            u_name = st.text_input("Full Name")
+            u_email = st.text_input("Email")
+            u_role = st.selectbox("Role", ["LGE", "QS", "SAM", "ADMIN"])
 
-    with tab3:
-        st.subheader("System User Provisioning")
-        users_df = db_adapter.fetch_table("users")
-        render_interactive_table(users_df, "admin_users_table")
-        
-        with st.expander("Provision New System User"):
-            with st.form("create_user_form"):
-                uname = st.text_input("Full Name")
-                uemail = st.text_input("Email")
-                urole = st.selectbox("Assign Portal Role", ["Admin", "Lead Executive", "Quotation Specialist", "Sales Manager"])
-                upass = st.text_input("Password", type="password")
-                
-                if st.form_submit_button("Add User"):
-                    new_u = {
-                        "user_id": f"u{len(users_df)+1}",
-                        "full_name": uname,
-                        "email": uemail,
-                        "role": urole,
-                        "password_hash": upass
-                    }
-                    db_adapter.insert_row("users", new_u)
-                    st.success("New user created successfully!")
-                    st.rerun()
+            if st.form_submit_button("Create User"):
+                db.insert_row(
+                    "users",
+                    {
+                        "user_id": u_id,
+                        "full_name": u_name,
+                        "email": u_email,
+                        "role": u_role,
+                        "created_at": datetime.now().strftime("%Y-%m-%d"),
+                    },
+                )
+                st.success(f"User {u_name} registered!")
+                st.rerun()
