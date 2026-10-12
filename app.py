@@ -3,6 +3,12 @@ from database.gsheets_adapter import GSheetsAdapter
 from utils.auth import init_session_auth, login_user, logout_user
 from components.navbar import render_navbar
 
+import sys
+import os
+
+# Add project root directory to sys.path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 # View Imports
 from views.lead_portal import render_lead_portal
 from views.quotation_portal import render_quotation_portal
