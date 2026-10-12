@@ -1,0 +1,12 @@
+# Exclude Streamlit Secrets & Credentials
+.streamlit/secrets.toml
+service_account.json
+
+# Exclude Virtual Environment
+myenv/
+venv/
+.venv/
+
+# Python Cache
+__pycache__/
+*.pyc
