@@ -1,10 +1,9 @@
 """
-Sidharth Shutter CRM - Main Application Entry Point.
+app.py - Main Streamlit Application Router
 """
 import sys
 from pathlib import Path
 
-# Force project root directory to Python path
 ROOT_DIR = Path(__file__).resolve().parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
@@ -32,46 +31,40 @@ st.set_page_config(
 
 apply_custom_theme()
 
-# Initialize SQLite Database Adapter
 db_adapter = SQLiteAdapter()
 init_session_auth()
 
-# Authentication Gatekeeper
+# Centered Brand Login Form
 if not st.session_state.get("authenticated", False):
     st.markdown("<br><br>", unsafe_allow_html=True)
-    col_left, col_center, col_right = st.columns([1, 1.8, 1])
+    c_left, c_center, c_right = st.columns([1, 1.6, 1])
 
-    with col_center:
-        with st.form("crm_portal_login_form"):
-            try:
-                st.image("Company Logo_2.jpeg", use_container_width=True)
-            except Exception:
-                st.markdown("""
-                <div style='text-align: center; margin-bottom: 15px;'>
-                    <h2 style='color: #184B9C; font-weight: 800; margin: 0;'>🏭 SIDHARTH SHUTTER</h2>
-                    <p style='color: #00A859; font-weight: 700; font-size: 13px; text-transform: uppercase; margin: 0;'>& Automation Solutions</p>
-                </div>
-                """, unsafe_allow_html=True)
+    with c_center:
+        st.markdown("<div class='saas-card' style='text-align: center; padding: 30px;'>", unsafe_allow_html=True)
+        try:
+            st.image("Company Logo.jpeg", use_container_width=True)
+        except Exception:
+            st.markdown("<h2 style='color: #184B9C; font-weight: 800; margin-bottom: 0;'>SIDHARTH SHUTTER</h2><p style='color: #00A859; font-weight: 700; margin-top:0;'>& AUTOMATION SOLUTIONS</p>", unsafe_allow_html=True)
 
-            st.markdown("<p style='text-align: center; color: #64748B; font-weight: 600; font-size: 14px; margin-bottom: 25px;'>Enterprise CRM & Operational Portal</p>", unsafe_allow_html=True)
+        st.markdown("<p style='color: #64748B; font-weight: 600; font-size: 14px; margin-bottom: 25px;'>Enterprise Lead CRM & Operations Portal</p>", unsafe_allow_html=True)
 
+        with st.form("centered_login_form"):
             username_input = st.text_input("Username / Email", placeholder="e.g. admin or albert").strip().lower()
             password_input = st.text_input("Password", type="password", placeholder="Enter account password").strip()
 
-            submit_login = st.form_submit_button("Login")
+            submit_login = st.form_submit_button("LOGIN TO DASHBOARD")
 
             if submit_login:
-                if not username_input or not password_input:
-                    st.warning("Please enter both Username/Email and Password.")
+                if login_user(db_adapter, username_input, password_input):
+                    st.success("Login Successful!")
+                    st.rerun()
                 else:
-                    if login_user(db_adapter, username_input, password_input):
-                        st.success("Login Successful!")
-                        st.rerun()
-                    else:
-                        st.error("Invalid credentials. Try admin / admin123")
+                    st.error("Invalid credentials. Try admin / admin123")
+
+        st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
-# Authenticated Navigation Router
+# Main Workspace
 user = get_current_user()
 render_navbar(user)
 
@@ -91,7 +84,7 @@ initials = "".join([p[0].upper() for p in user_name.strip().split()[:2]]) if use
 with st.sidebar:
     st.markdown("<div style='background-color: #FFFFFF; padding: 12px; border-radius: 12px; margin-bottom: 15px; text-align: center;'>", unsafe_allow_html=True)
     try:
-        st.image("Company Logo_2.jpeg", use_container_width=True)
+        st.image("Company Logo.jpeg", use_container_width=True)
     except Exception:
         st.markdown("<h3 style='color:#184B9C; font-weight:800; margin:0;'>SIDHARTH SHUTTER</h3>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
@@ -121,15 +114,12 @@ with st.sidebar:
     elif user_role in ["LGE"]:
         available_views["📥 Lead Generation Portal"] = render_lead_portal
         available_views["🔍 Client Inspector"] = render_client_inspector
-        available_views["📊 Employee Report Card"] = render_employee_report
     elif user_role in ["QS"]:
         available_views["📝 Quotation Desk Portal"] = render_quotation_portal
         available_views["🔍 Client Inspector"] = render_client_inspector
-        available_views["📊 Employee Report Card"] = render_employee_report
     elif user_role in ["SAM"]:
         available_views["💼 Sales Management Portal"] = render_sales_portal
         available_views["🔍 Client Inspector"] = render_client_inspector
-        available_views["📊 Employee Report Card"] = render_employee_report
     elif user_role in ["OPERATIONS"]:
         available_views["⚙️ Order Fulfillment"] = render_process_portal
         available_views["🔍 Client Inspector"] = render_client_inspector

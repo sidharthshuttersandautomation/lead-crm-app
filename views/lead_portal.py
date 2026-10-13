@@ -4,79 +4,73 @@ Lead Generation Executive Workstation.
 import datetime
 import pandas as pd
 import streamlit as st
-
-from config.settings import (
-    CLIENT_TYPES, FINAL_STATUS_OPTIONS, PRODUCT_NAME_OPTIONS,
-    SALESPERSONS_LIST, SOURCE_OPTIONS, TEAM_MEMBERS, REPORTING_TIMEFRAMES, IST
-)
+from config.settings import CLIENT_TYPES, FINAL_STATUS_OPTIONS, SOURCE_OPTIONS, IST
 from utils.id_generator import generate_client_id, get_next_sequential_id
 from components.follow_up_cards import render_follow_up_card
 
 def render_lead_portal(db_adapter, current_user):
     st.markdown("<h2 style='color:#0E2C68; font-weight:800;'>📥 Lead Generation Workstation</h2>", unsafe_allow_html=True)
-    df_leads = db_adapter.fetch_all("leads_data")
+    df_leads = db_adapter.fetch_all("leads_master")
+    df_products = db_adapter.fetch_all("products")
+    df_emp = db_adapter.fetch_all("employees")
 
     t1, t2, t3 = st.tabs([
-        "📈 Performance & Progress Control",
+        "📈 Admin Performance & Progress Control",
         "📥 Add New Lead",
         "⚡ Follow-up Queue & Workday"
     ])
 
-    # 1. Performance Control
     with t1:
-        st.markdown("##### 📈 Monthly Ingestion Analytics & Progress")
-        selected_tf = st.selectbox("📅 Reporting Timeframe Filter", REPORTING_TIMEFRAMES, index=2, key="lge_tf")
+        st.markdown("##### 📈 Lead Executive Performance Metrics")
+        total_leads = len(df_leads) if not df_leads.empty else 0
+        cancled_leads = len(df_leads[df_leads["final_status"].astype(str).str.lower().isin(["cancled", "canceled", "lost"])]) if not df_leads.empty else 0
+        connected_leads = total_leads - cancled_leads
 
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.metric("Total Ingested Leads", len(df_leads))
+            st.metric("Total Ingested Leads", total_leads)
         with c2:
-            buy_cnt = len(df_leads[df_leads["type_of_client"] == "New Buy"]) if not df_leads.empty and "type_of_client" in df_leads.columns else 0
-            st.metric("New Buy Inquiries (BID)", buy_cnt)
+            st.metric("Leads Connected With", connected_leads)
         with c3:
-            srv_cnt = len(df_leads[df_leads["type_of_client"] == "Service"]) if not df_leads.empty and "type_of_client" in df_leads.columns else 0
-            st.metric("Service Inquiries (SID)", srv_cnt)
+            st.metric("Leads Canceled / Lost", cancled_leads)
 
         st.markdown("---")
         st.dataframe(df_leads, use_container_width=True, hide_index=True)
 
-    # 2. Add New Lead
     with t2:
         st.markdown("##### 📥 Ingest New Client Requirement")
         next_sr_no = get_next_sequential_id(df_leads)
         today_now = datetime.datetime.now(IST)
 
+        product_list = list(df_products["product_name"].unique()) if not df_products.empty else ["Automatic Rolling Shutters"]
+        sam_list = list(df_emp[df_emp["role"] == "SAM"]["full_name"].unique()) if not df_emp.empty else ["Jeevan Sharma"]
+
         with st.form("add_lead_form_lge_master", clear_on_submit=True):
-            st.info(f"🔢 **Auto Dynamic Sr. No:** `{next_sr_no}` | **Timestamp:** `{today_now.strftime('%Y-%m-%d %H:%M:%S')}`")
+            st.info(f"🔢 **Dynamic Lead Sr. No:** `{next_sr_no}` | **Timestamp:** `{today_now.strftime('%Y-%m-%d %H:%M:%S')}`")
 
             c1, c2, c3 = st.columns(3)
             with c1:
                 client_type = st.selectbox("Type of client *", CLIENT_TYPES)
                 client_name = st.text_input("Client Name *", placeholder="Enter full client name")
-                company_name = st.text_input("Company Name *", placeholder="Enter firm or company name")
+                company_name = st.text_input("Company Name", placeholder="Enter firm or company name")
             with c2:
                 contact_no = st.text_input("Contact No. *", placeholder="e.g. 9876543210")
                 email = st.text_input("Email ID", placeholder="client@company.com")
-                product = st.selectbox("Product *", PRODUCT_NAME_OPTIONS)
+                product_selected = st.selectbox("Product *", product_list)
             with c3:
                 quantity = st.number_input("Quantity", min_value=1, value=1)
                 address = st.text_input("Address *", placeholder="Site or office address")
                 city = st.text_input("City *", value="Indore")
 
-            c4, c5, c6 = st.columns(3)
+            c4, c5 = st.columns(2)
             with c4:
                 state = st.text_input("State", value="Madhya Pradesh")
                 source = st.selectbox("Source *", SOURCE_OPTIONS)
-                assigned_sp = st.selectbox("Assigned Salesperson *", SALESPERSONS_LIST)
             with c5:
+                assigned_sam_name = st.selectbox("Assigned Salesperson (SAM) *", sam_list)
                 final_status = st.selectbox("Final Status", FINAL_STATUS_OPTIONS)
-                quotation_status = st.selectbox("Quotation Status", ["Pending", "Under Process", "Sent", "Approved"])
-                leads_handle_by = st.selectbox("Leads Handled By", TEAM_MEMBERS)
-            with c6:
-                quotation_sent_by = st.selectbox("Quotation Sent By", TEAM_MEMBERS)
-                customer_status = st.selectbox("Customer Status", ["New", "Follow-up Required", "Cold", "Closed"])
 
-            remarks = st.text_area("Initial Remarks", placeholder="Enter requirement details...")
+            remarks = st.text_area("Initial Requirement Remarks", placeholder="Enter requirement details...")
             submit_btn = st.form_submit_button("💾 Save & Ingest Lead")
 
             if submit_btn:
@@ -84,73 +78,79 @@ def render_lead_portal(db_adapter, current_user):
                     st.error("Please fill in mandatory fields: Client Name, Contact No., and City.")
                 else:
                     generated_client_id = generate_client_id(client_type, today_now.date(), df_leads)
-                    new_lead_data = {
+                    
+                    # Insert Customer
+                    customer_record = {
                         "client_id": generated_client_id,
-                        "date_stamp": today_now.strftime("%Y-%m-%d %H:%M:%S"),
-                        "month": today_now.strftime("%B"),
-                        "date": today_now.strftime("%Y-%m-%d"),
                         "client_name": client_name,
                         "company_name": company_name,
-                        "number": contact_no,
+                        "phone_number": contact_no,
                         "email": email,
-                        "product": product,
-                        "qty": quantity,
                         "address": address,
                         "city": city,
-                        "state": state,
+                        "state": state
+                    }
+                    db_adapter.insert_row("customers", customer_record)
+
+                    # Lookup Product ID
+                    pid = 1
+                    if not df_products.empty:
+                        matched = df_products[df_products["product_name"] == product_selected]
+                        if not matched.empty:
+                            pid = int(matched.iloc[0]["product_id"])
+
+                    # Lookup SAM ID
+                    sam_id = "EMP-105"
+                    if not df_emp.empty:
+                        matched_sam = df_emp[df_emp["full_name"] == assigned_sam_name]
+                        if not matched_sam.empty:
+                            sam_id = str(matched_sam.iloc[0]["employee_id"])
+
+                    lead_record = {
+                        "client_id": generated_client_id,
+                        "product_id": pid,
+                        "quantity": quantity,
                         "source": source,
-                        "assigned_salesperson": assigned_sp,
                         "type_of_client": client_type,
                         "final_status": final_status,
-                        "quotation_status": quotation_status,
-                        "leads_handled_by": leads_handle_by,
-                        "quotation_sent_by": quotation_sent_by,
-                        "customer_status": customer_status,
+                        "quotation_status": "Not Sent",
+                        "customer_status": "Active",
+                        "customer_responded": "Yes",
+                        "product_status": "Standard",
                         "remarks": remarks,
-                        "claimed_by_qs": "Unassigned"
+                        "handled_by_lge_id": current_user.get("employee_id", "EMP-101"),
+                        "assigned_sam_id": sam_id,
+                        "ingestion_date": today_now.strftime("%Y-%m-%d"),
+                        "claimed_qs_id": "Unassigned"
                     }
-                    db_adapter.insert_row("leads_data", new_lead_data)
+                    db_adapter.insert_row("leads_master", lead_record)
 
-                    follow_entry = {
-                        "followup_id": f"FL-{next_sr_no:04d}",
-                        "client_id": generated_client_id,
-                        "quotation_follow_up_by": assigned_sp,
-                        "total_followups": 0,
-                        "followup_status": "Pending Quotation",
-                        "cancel_category": "N/A",
-                        "scheduled_call_time": str(today_now + datetime.timedelta(days=3)),
-                        "notes": f"Lead Ingested on {today_now.strftime('%Y-%m-%d %H:%M')}",
-                        "month": today_now.strftime("%B"),
-                        "last_followed_by": current_user.get("name", "LGE")
-                    }
-                    db_adapter.insert_row("followup_tracker", follow_entry)
-
-                    st.toast(f"🎉 Lead Created Successfully! Generated Client ID: {generated_client_id}", icon="✅")
+                    st.toast(f"🎉 Lead Ingested! Generated Client ID: {generated_client_id}", icon="✅")
                     st.rerun()
 
-    # 3. Follow-up Workstation
     with t3:
-        st.markdown("##### ⚡ Dynamic Follow-up Queue")
-        df_follow = db_adapter.fetch_all("followup_tracker")
-        if not df_follow.empty:
-            for idx, row in df_follow.iterrows():
+        st.markdown("##### ⚡ Non-Quoted Clients Follow-up Workstation")
+        non_quoted = df_leads[df_leads["quotation_status"] != "Sent"] if not df_leads.empty else pd.DataFrame()
+        if not non_quoted.empty:
+            for idx, row in non_quoted.iterrows():
                 cid = str(row.get("client_id", "N/A"))
-                lead_match = df_leads[df_leads["client_id"] == cid] if not df_leads.empty else pd.DataFrame()
-                c_name = lead_match.iloc[0].get("client_name", "Client") if not lead_match.empty else "Client"
-                addr = lead_match.iloc[0].get("address", "N/A") if not lead_match.empty else "N/A"
-                cty = lead_match.iloc[0].get("city", "N/A") if not lead_match.empty else "N/A"
-                prod = lead_match.iloc[0].get("product", "Automation") if not lead_match.empty else "Automation"
+                cname = str(row.get("client_name", "Client"))
+                addr = str(row.get("address", "N/A"))
+                cty = str(row.get("city", "N/A"))
+                prod = str(row.get("product", "Automation"))
 
                 render_follow_up_card(
                     db_adapter=db_adapter,
                     client_id=cid,
-                    client_name=c_name,
+                    client_name=cname,
                     address=addr,
                     city=cty,
                     product=prod,
                     last_price=0.0,
-                    followups_count=int(row.get("total_followups", 0)),
-                    remarks_history=[str(row.get("notes", "Initial Lead Ingested"))],
+                    followups_count=1,
+                    remarks_history=["Initial requirement recorded"],
                     current_user_name=current_user.get("name", "LGE"),
-                    key=f"lge_card_{idx}"
+                    key=f"lge_non_quote_{idx}"
                 )
+        else:
+            st.info("No non-quoted leads pending follow-up.")

@@ -1,21 +1,32 @@
+How the working I want to be 
+
 Example: Albert eneterd the lead and its details then it is shown to all the quotation team as notification. The Quotation Team has many members like Pooja, Dolly, Anjali and lead executive as well.
 the one who accepts the quotation making that quotation belongs to them and counted in their report. Example Pooja accepted 1 quotation it belongs to her.
-All the further changes shpuld be handled by them, but the others are also edit or do the changes if they search for the client. Search can be by Client name or client id as well. 
+All the further changes should be handled by pooja for that quotation, but the others are also can edit or do the changes if they search for the client. Search can be by Client name or client id as well. 
+The data Entered by the Lead executive it Dynamically shown to Quotation specialists for the feild mentioned below.
 
+- Make the Ui of the app according to the logo only.
 
-For All Logout Button Make it Green and Use Gardient Effect.
+- Mark Quotation as sent then only it is forwarded to Quotation sheet other wise the data must be stored in lead sheet only. But Later the status can be changed as well.
+  example: a new lead is entered but it does not have all the details of it is not added to quotation sheet as soon as the details are enetered it added to quotation sheet.
+- In Follow up add this as well to take the details from the cleint to whom quotation is not sent. It must be shown to Lead Executive only.
 
-For Login Form enhance the Ui and Use the Logo of the company. Shift the login button to the center and expand it till the form. Redesign it in more better way.
+- For All Logout Button Make it Green and Use Gardient Effect.
+
+- For Login Form enhance the Ui and Use the Logo of the company. Shift the login button to the center and expand it till the form. Redesign it in more better way.
 
 For Admin Portal: Re arrange the Tabs in Navigation Tab.
 	- 🛡️ Admin Control Center:
-		- By default in the Kpi's Current month data must be visible.
+		- Do not show the excel directly. Create a button on which the admin clicks and all the excel data is displayed.
+		
 		- Total Data is shown: Example All the leads, quotations etc combined.
 		- The admins can have the look of what is acutally happening. 
 		- Only for admins. They have a Kpi of Total Sales done.
 
 	- 📥 Lead Generation Portal: There are these 4 tabs : 
-		- 📈 Admin Performance & Progress Control: This is Fine.
+		- 📈 Admin Performance & Progress Control: Add More features in it.
+			- Add More KPI's Like : Total Leads connected with, How many leads got cancel.
+			- Display the KPI's in boxes for better presentation.
 
 		- 📥 Add New Lead: This is Fine.
 
@@ -25,44 +36,58 @@ For Admin Portal: Re arrange the Tabs in Navigation Tab.
 		
 
 
-	- 📝 Quotation Desk Portal: There are these 5 tabs : 
-		- 📈 Performance & Progress Control: This is fine.
+	- 📝 Quotation Desk Portal: There are these 2 tabs : 
+		- 📈 Performance & Progress Control: Display the KPis in better form and add more features by which the proper insight can be seen regarding quotations.
+`			example: How many sent how many got rejected how many and more. 
+		- For admins there is no  "Quotations Prepared by You".
+		- In this Portal all over the quotation report is shown. 
+		- 📄 Quotation Generator & Convert:Create a excel button on which by clicking the excel is displayed. Add the Same in other Portals as well.
+			- The details are shown in beautiful cards 	
+		- Add another Tab in which details regarding the Quotation are added.
+			- While Quotation is being made this is the data we try to store in which many details are fetch automatically by the lead sheet. I'm Entering the columns below.
+			  Create a form for Quotation sheet in which data which is already filled in lead sheet is dynamically shown.
+				Quotation Sheet	
+				Client ID	Automatic Fetched by Lead Sheet
+				Date Stamp	Automatic Fetched by Lead Sheet
+				Client Name	Automatic Fetched by Lead Sheet
+				Company Name	Automatic Fetched by Lead Sheet
+				Quotation Number	Manual Entry
+				Customer Contact Number	Automatic Fetched by Lead Sheet
+				Product	Automatic Fetched by Lead Sheet
+				Quantity	Automatic Fetched by Lead Sheet
+				Qut. Amount	Manual Entry
+				City	Automatic Fetched by Lead Sheet
+				Source	Automatic Fetched by Lead Sheet
+				Assigned Salesperson	Automatic Fetched by Lead Sheet
+	
+				Revised	drop down
+				Quotation Status	drop down
+				Follow Up Required	drop down
+				Qut. Status Approved By	drop down
+				Follow Up Status	drop down
+				Link	for folder
+				Quotation Shared By	drop down
+				Quotation Update Time	Automatic
+				Month	Manual
+				Date	Automatic
+				Approved Date	Manual
+	
+				Company Name-1	drop down
+				Approved Month	Manual
 
-		- ⚡ Follow-up Queue & Workday: Remove this.
-
-		- 📥 Add New Lead: Remove this.
-
-		- 📄 Quotation Generator & Convert: Use the updated form.
-
-		- 🔍 Client Inspector: Remove this.
 
 
 	- 💼 Sales Management Portal: There are these 5 tabs :
-		- 📈 Admin Performance & Progress Control: Instead of this make the Single board which has the following details:
-			- Kpi's of total sales done, total leads, total quotations sent, Lead conversion rate.
-			- Create Dynamic Graphs for which it is easy to see the thing. Make the Graphs interactive. 
-			- I also want something which tells how many client lost and their reason to be gone.
-			- You can add more features as well so that we Can have the more insigts. Do tell which changes you did.
-
-		- ⚡ Follow-up Queue & Workday: Remove this.
-
-		- 📥 Add New Lead: Remove this.
-
-		- ⚙️ Process Order Execution: Remove this.
-
-		- 🔍 Client Inspector: Remove this.
-
+		- Make it more better and more precised so that admins can have better look. Use multiple graphs more details that should be shown.
+		- I also want details about the products as well it will give the better idea which product is performing how?
 
 	- ⚙️ Order Fulfillment: Keep this same.
 
 
 	- 🔍 Client Inspector: 
-		- This act as the Master Sheet. The Employee can simple Inspect any client by search their client name or client id.
-		- If an employee enters the client name or client id complete details of that client mst be shown.
-		- They can also choose particular columns from the  master data.
-		  Example: i want sr no, client name, product, quantity, address amount, for 15 days or a particular date range, they must be able to download it. 
-	
-	- This is the new feature that must be added.
+		- If an employee enters the client name or client id or company name complete details of that client mst be shown.
+		
+	- This is the new feature that must be added. This is strictly for Admins only. No other employee can see each others report cards. 
 		- Employee Report: It will give individual report for them.
 			- This tab must act as the report card of the empoyees. 
 			- How many leads they entered, how many got converted how many got lost and more. 
@@ -72,6 +97,7 @@ For Admin Portal: Re arrange the Tabs in Navigation Tab.
 	- 👥 User Management
 		- Give the Add New Employee Option and excel Sheet Must be displayed by Clicking on a button below Add a new user.
 		- User Can be created by Admin only.
+		- user Id is automatically generated. 
 
 For Quotation Portal: Shift the tabs to Navigation Tab.
 	- Main dashbard: They must get the details of the clients to make the quotation in the form of notification. If the Client is assigned till 5:30 pm
@@ -112,6 +138,9 @@ For Quotation:
 
 Add this data into the the project so  that I cn have a better obersavtion.
 
+------------------------------------------------------------
+Mark Quotation as sent then only it is forwarded to Quotation sheet other wise the data must be stored in lead sheet only. But Later the status can be changed as well.
+------------------------------------------------------------
 
 🚀 Proposed Next Features & Enhancements
 Automated WhatsApp / Email Follow-up Triggers:

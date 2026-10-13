@@ -1,5 +1,5 @@
 """
-SQLite Database Adapter Implementation.
+Relational SQLite Adapter for Sidharth Shutter CRM.
 """
 import sqlite3
 import pandas as pd
@@ -10,146 +10,80 @@ DB_PATH = "crm_database.db"
 class SQLiteAdapter(BaseDatabaseAdapter):
     def __init__(self, db_path: str = DB_PATH):
         self.db_path = db_path
-        self._init_db()
 
     def _get_connection(self):
         return sqlite3.connect(self.db_path)
 
-    def _init_db(self):
-        """Creates tables if they do not exist."""
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Users Table
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id TEXT PRIMARY KEY,
-                username TEXT UNIQUE,
-                password TEXT,
-                role TEXT,
-                full_name TEXT,
-                email TEXT
-            )
-            """)
-
-            # Seed default users if empty
-            cursor.execute("SELECT COUNT(*) FROM users")
-            if cursor.fetchone()[0] == 0:
-                default_users = [
-                    ("U101", "admin", "admin123", "ADMIN", "System Administrator", "admin@sidharth.com"),
-                    ("U102", "albert", "albert123", "LGE", "Albert Singh", "albert@sidharth.com"),
-                    ("U103", "pooja", "pooja123", "QS", "Pooja", "pooja@sidharth.com"),
-                    ("U104", "dolly", "dolly123", "QS", "Dolly", "dolly@sidharth.com"),
-                    ("U105", "jeevan", "jeevan123", "SAM", "Jeevan Sharma", "jeevan@sidharth.com"),
-                    ("U106", "ops", "ops123", "OPERATIONS", "Operations Specialist", "ops@sidharth.com")
-                ]
-                cursor.executemany("INSERT INTO users VALUES (?, ?, ?, ?, ?, ?)", default_users)
-
-            # Leads Data Table
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS leads_data (
-                "Sr. No" INTEGER PRIMARY KEY,
-                "Client ID" TEXT,
-                "Date Stamp" TEXT,
-                "Month" TEXT,
-                "Date" TEXT,
-                "Client Name" TEXT,
-                "Company Name" TEXT,
-                "Contact No." TEXT,
-                "Email" TEXT,
-                "Product" TEXT,
-                "Quantity" INTEGER,
-                "Address" TEXT,
-                "City" TEXT,
-                "State" TEXT,
-                "Source" TEXT,
-                "Assigned Salesperson" TEXT,
-                "Type of client" TEXT,
-                "Final Status" TEXT,
-                "Quotation Status" TEXT,
-                "Leads Handle By" TEXT,
-                "Quotation Sent By" TEXT,
-                "Customer Status" TEXT,
-                "Customer Responded" TEXT,
-                "Remarks" TEXT,
-                "Product Status" TEXT,
-                "Claimed By QS" TEXT
-            )
-            """)
-
-            # Quotation Sheet Table
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS quotation_sheet (
-                "Quotation Number" TEXT PRIMARY KEY,
-                "Client ID" TEXT,
-                "Client Name" TEXT,
-                "Company Name" TEXT,
-                "Contact Number" TEXT,
-                "City" TEXT,
-                "Product" TEXT,
-                "Quantity" INTEGER,
-                "Subtotal Amount" REAL,
-                "GST Amount" REAL,
-                "Grand Total" REAL,
-                "Assigned Salesperson" TEXT,
-                "Prepared By QS" TEXT,
-                "Quotation Status" TEXT,
-                "Revision Count" INTEGER,
-                "Request Timestamp" TEXT,
-                "Completion Timestamp" TEXT,
-                "Is After Cutoff" TEXT,
-                "Remarks" TEXT
-            )
-            """)
-
-            # Followup Tracker Table
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS followup_tracker (
-                "Followup ID" TEXT PRIMARY KEY,
-                "Client ID" TEXT,
-                "Client Name" TEXT,
-                "Contact Number" TEXT,
-                "City" TEXT,
-                "Product" TEXT,
-                "Last Quoted Price" REAL,
-                "Assigned Salesperson" TEXT,
-                "Follow-up Status" TEXT,
-                "Completed Follow-ups Count" INTEGER,
-                "Remarks History" TEXT,
-                "Next Follow-up Date" TEXT,
-                "Next Follow-up Time" TEXT,
-                "Cancel Category" TEXT,
-                "Last Followed By" TEXT
-            )
-            """)
-
-            # Process Order Table
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS process_order (
-                "Order ID" TEXT PRIMARY KEY,
-                "Client ID" TEXT,
-                "Quotation Number" TEXT,
-                "Client Name" TEXT,
-                "Company Name" TEXT,
-                "Product" TEXT,
-                "PO Number" TEXT,
-                "PI Number" TEXT,
-                "Advance Payment Status" TEXT,
-                "Measurement Status" TEXT,
-                "Drawing Status" TEXT,
-                "Production Status" TEXT,
-                "Dispatch Status" TEXT,
-                "Invoice Number" TEXT,
-                "Final Remarks" TEXT
-            )
-            """)
-            conn.commit()
-
     def fetch_all(self, table_name: str) -> pd.DataFrame:
         with self._get_connection() as conn:
             try:
-                return pd.read_sql_query(f'SELECT * FROM "{table_name}"', conn)
-            except Exception:
+                if table_name == "leads_master":
+                    query = """
+                    SELECT 
+                        lm.lead_id,
+                        c.client_id,
+                        c.client_name,
+                        c.company_name,
+                        c.phone_number,
+                        c.email,
+                        c.city,
+                        c.address,
+                        p.product_name AS product,
+                        lm.quantity AS qty,
+                        lm.source,
+                        lm.final_status,
+                        lm.quotation_status,
+                        emp_lge.full_name AS leads_handled_by,
+                        emp_sam.full_name AS assigned_salesperson,
+                        emp_qs.full_name AS claimed_qs_name,
+                        lm.claimed_qs_id,
+                        lm.ingestion_date
+                    FROM leads_master lm
+                    JOIN customers c ON lm.client_id = c.client_id
+                    JOIN products p ON lm.product_id = p.product_id
+                    LEFT JOIN employees emp_lge ON lm.handled_by_lge_id = emp_lge.employee_id
+                    LEFT JOIN employees emp_sam ON lm.assigned_sam_id = emp_sam.employee_id
+                    LEFT JOIN employees emp_qs ON lm.claimed_qs_id = emp_qs.employee_id
+                    """
+                    return pd.read_sql_query(query, conn)
+
+                elif table_name == "quotations_master":
+                    query = """
+                    SELECT 
+                        qm.quotation_id,
+                        qm.client_id,
+                        qm.quotation_number,
+                        c.client_name,
+                        c.company_name,
+                        c.phone_number,
+                        p.product_name AS product,
+                        qm.qut_amount,
+                        qm.quotation_status,
+                        qm.revised,
+                        emp_qs.full_name AS quotation_shared_by,
+                        qm.created_timestamp
+                    FROM quotations_master qm
+                    JOIN customers c ON qm.client_id = c.client_id
+                    JOIN leads_master lm ON qm.lead_id = lm.lead_id
+                    JOIN products p ON lm.product_id = p.product_id
+                    LEFT JOIN employees emp_qs ON qm.claimed_qs_id = emp_qs.employee_id
+                    """
+                    return pd.read_sql_query(query, conn)
+
+                elif table_name == "employees":
+                    return pd.read_sql_query("SELECT employee_id, full_name, email, role, is_active FROM employees", conn)
+
+                elif table_name == "products":
+                    return pd.read_sql_query("SELECT * FROM products", conn)
+
+                elif table_name == "followup_logs":
+                    return pd.read_sql_query("SELECT * FROM followup_logs", conn)
+
+                else:
+                    return pd.read_sql_query(f'SELECT * FROM "{table_name}"', conn)
+
+            except Exception as e:
+                print(f"Error fetching {table_name}: {e}")
                 return pd.DataFrame()
 
     def insert_row(self, table_name: str, row_dict: dict) -> bool:
@@ -159,7 +93,7 @@ class SQLiteAdapter(BaseDatabaseAdapter):
                 df.to_sql(table_name, conn, if_exists="append", index=False)
                 return True
             except Exception as e:
-                print(f"SQLite insert error on {table_name}: {e}")
+                print(f"Insert error on {table_name}: {e}")
                 return False
 
     def update_row(self, table_name: str, key_column: str, key_value: str, updated_dict: dict) -> bool:
@@ -172,7 +106,7 @@ class SQLiteAdapter(BaseDatabaseAdapter):
                 conn.commit()
                 return True
             except Exception as e:
-                print(f"SQLite update error on {table_name}: {e}")
+                print(f"Update error on {table_name}: {e}")
                 return False
 
     def delete_row(self, table_name: str, key_column: str, key_value: str) -> bool:
@@ -183,5 +117,5 @@ class SQLiteAdapter(BaseDatabaseAdapter):
                 conn.commit()
                 return True
             except Exception as e:
-                print(f"SQLite delete error on {table_name}: {e}")
+                print(f"Delete error on {table_name}: {e}")
                 return False
