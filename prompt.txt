@@ -1,0 +1,141 @@
+Example: Albert eneterd the lead and its details then it is shown to all the quotation team as notification. The Quotation Team has many members like Pooja, Dolly, Anjali and lead executive as well.
+the one who accepts the quotation making that quotation belongs to them and counted in their report. Example Pooja accepted 1 quotation it belongs to her.
+All the further changes shpuld be handled by them, but the others are also edit or do the changes if they search for the client. Search can be by Client name or client id as well. 
+
+
+For All Logout Button Make it Green and Use Gardient Effect.
+
+For Login Form enhance the Ui and Use the Logo of the company. Shift the login button to the center and expand it till the form. Redesign it in more better way.
+
+For Admin Portal: Re arrange the Tabs in Navigation Tab.
+	- 🛡️ Admin Control Center:
+		- By default in the Kpi's Current month data must be visible.
+		- Total Data is shown: Example All the leads, quotations etc combined.
+		- The admins can have the look of what is acutally happening. 
+		- Only for admins. They have a Kpi of Total Sales done.
+
+	- 📥 Lead Generation Portal: There are these 4 tabs : 
+		- 📈 Admin Performance & Progress Control: This is Fine.
+
+		- 📥 Add New Lead: This is Fine.
+
+		- ⚡ Follow-up Queue & Workday:This is Fine.
+
+		- 📄 Quotation Generator & Convert: Remove this.
+		
+
+
+	- 📝 Quotation Desk Portal: There are these 5 tabs : 
+		- 📈 Performance & Progress Control: This is fine.
+
+		- ⚡ Follow-up Queue & Workday: Remove this.
+
+		- 📥 Add New Lead: Remove this.
+
+		- 📄 Quotation Generator & Convert: Use the updated form.
+
+		- 🔍 Client Inspector: Remove this.
+
+
+	- 💼 Sales Management Portal: There are these 5 tabs :
+		- 📈 Admin Performance & Progress Control: Instead of this make the Single board which has the following details:
+			- Kpi's of total sales done, total leads, total quotations sent, Lead conversion rate.
+			- Create Dynamic Graphs for which it is easy to see the thing. Make the Graphs interactive. 
+			- I also want something which tells how many client lost and their reason to be gone.
+			- You can add more features as well so that we Can have the more insigts. Do tell which changes you did.
+
+		- ⚡ Follow-up Queue & Workday: Remove this.
+
+		- 📥 Add New Lead: Remove this.
+
+		- ⚙️ Process Order Execution: Remove this.
+
+		- 🔍 Client Inspector: Remove this.
+
+
+	- ⚙️ Order Fulfillment: Keep this same.
+
+
+	- 🔍 Client Inspector: 
+		- This act as the Master Sheet. The Employee can simple Inspect any client by search their client name or client id.
+		- If an employee enters the client name or client id complete details of that client mst be shown.
+		- They can also choose particular columns from the  master data.
+		  Example: i want sr no, client name, product, quantity, address amount, for 15 days or a particular date range, they must be able to download it. 
+	
+	- This is the new feature that must be added.
+		- Employee Report: It will give individual report for them.
+			- This tab must act as the report card of the empoyees. 
+			- How many leads they entered, how many got converted how many got lost and more. 
+			- There must bhi KPI"S for their reports as well an the graphs.
+			- This is the board from which the actual work of the employee will be seen.
+
+	- 👥 User Management
+		- Give the Add New Employee Option and excel Sheet Must be displayed by Clicking on a button below Add a new user.
+		- User Can be created by Admin only.
+
+For Quotation Portal: Shift the tabs to Navigation Tab.
+	- Main dashbard: They must get the details of the clients to make the quotation in the form of notification. If the Client is assigned till 5:30 pm
+			 for that particuar client the quotation must be sent on the same day. But if its after that it shifted to next day in notifications.
+
+	- 📝 Quotation Desk Portal: Re arrange the tabs. Shift them to nagivation tab.
+	- 📈 Performance & Progress Control: 
+
+	- ⚡ Follow-up Queue & Workday: This is mostly dynamic. 	
+		- In this I want that an Auto reminder comes after 3 days from the previous call.
+		- if the client asks to call at a particular time or at a particullar day make sure they have note it down and there is a particular reminder for that.
+		- The data must appear in cards and in those cards details are shown. The cards must contain the number of follow ups taken.
+		- There is updates as well which person took the follow up. 
+		- These follow up counts must be shown in the report of the employee for admin.
+		- An employee must take follow ups.
+
+	- 📥 Add New Lead: Same as admin.
+
+	- 📄 Quotation Generator & Convert: Same as the Admin.
+
+	- 🔍 Client Inspector: Same as the Admin.
+
+For Lead Generation Executive:
+	- Shift the tabs to Navigation Tab.
+	📈 Admin Performance & Progress Control: In this Show Lead Executive their performance report with KPI's
+
+	- 📥 Add New Lead: Same
+
+	- ⚡ Follow-up Queue & Workday: Same as Quotation Portal
+
+	- 📄 Quotation Generator & Convert: 
+
+
+For Quotation: 
+	- Quotation is made manually but I want something for which data can be recorded so you have the incharge for this.
+	- 
+	- 
+
+Add this data into the the project so  that I cn have a better obersavtion.
+
+
+🚀 Proposed Next Features & Enhancements
+Automated WhatsApp / Email Follow-up Triggers:
+
+Add a one-click button inside the Follow-up Card to auto-generate pre-filled WhatsApp web links ([https://wa.me/](https://wa.me/)...) or email drafts with quotation summaries and follow-up notes.
+
+Smart Lead Ingestion Validation & Duplicate Prevention:
+
+Prevent accidental double-entries by automatically checking existing contact numbers/emails in leads_data when adding a new lead in Add New Lead.
+
+Custom Date-Range Quick Filters & Preset Toggles:
+
+Add instant preset buttons (Today, Last 7 Days, This Month, Custom) across Client Inspector, Lead Portal, and Admin Analytics for faster data filtering.
+
+Enhanced Quotation Document Generator / PDF Export:
+
+Add a feature in Quotation Desk Portal to download a clean, styled HTML/PDF invoice/quotation preview featuring the Sidharth Shutter branding and itemized cost calculations.
+
+Advanced Sales Conversion Funnel & Target Tracker:
+
+Introduce monthly target progress bars for SAMs (e.g., Target vs. Achieved Sales Volume) with visual stage-by-stage conversion funnel charts in the Sales Management Portal.
+
+
+
+
+
+

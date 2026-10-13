@@ -1,21 +1,17 @@
 [theme]
-primaryColor = "#0A4B8A"
+primaryColor = "#184B9C"
 backgroundColor = "#F8FAFC"
 secondaryBackgroundColor = "#FFFFFF"
-textColor = "#1E293B"
+textColor = "#0E2C68"
 font = "sans serif"
+
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = false
 
 [client]
 showErrorDetails = true
 
-[connections.gsheets]
-type = "service_account"
-project_id = "leadquotation"
-private_key_id = "0a89cf5f45972954d377fdd27fcf233ebe08a92d"
-private_key = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDP8E668zNjsHhU...\n-----END PRIVATE KEY-----\n"
-client_email = "leadquotationcrm@leadquotation.iam.gserviceaccount.com"
-client_id = "115447064949897550501"
-auth_uri = "https://accounts.google.com/o/oauth2/auth"
-token_uri = "https://oauth2.googleapis.com/token"
-auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
-client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/leadquotationcrm%40leadquotation.iam.gserviceaccount.com"
+[ui]
+hideTopBar = true

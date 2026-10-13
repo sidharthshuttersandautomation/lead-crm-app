@@ -1,67 +1,74 @@
+"""
+Admin Control Center & User Management Workspace.
+"""
+import datetime
+import pandas as pd
 import streamlit as st
-import plotly.express as px
-from datetime import datetime
-from config.settings import DATE_FILTER_OPTIONS, PRIMARY_BLUE
-from components.kpi_cards import render_kpi_cards
-from components.data_tables import render_interactive_table
+from config.settings import REPORTING_TIMEFRAMES
 
-def render_admin_portal(db, current_user: dict):
-    st.title("🛡️ Admin & Analytics Control Center")
-    st.caption("System Performance, SLA Monitoring & User Governance")
+def render_admin_portal(db_adapter, current_user):
+    st.markdown("<h2 style='color:#0E2C68; font-weight:800;'>🛡️ Executive Admin Analytics Control Center</h2>", unsafe_allow_html=True)
 
-    st.selectbox("📅 Reporting Timeframe", DATE_FILTER_OPTIONS, index=2)
-    st.divider()
+    df_leads = db_adapter.fetch_all("leads_data")
+    df_quotes = db_adapter.fetch_all("quotation_sheet")
 
-    df_leads = db.fetch_all("leads_data")
-    df_quotes = db.fetch_all("quotation_sheet")
-    df_users = db.fetch_all("users")
+    # Current Month Default Filter
+    today = datetime.datetime.now()
+    current_month_str = today.strftime("%B")
 
-    kpis = [
-        {"label": "Total System Leads", "value": len(df_leads)},
-        {"label": "Quotations Drafted", "value": len(df_quotes)},
-    ]
-    render_kpi_cards(kpis)
-    st.divider()
+    month_leads = df_leads[df_leads["month"] == current_month_str] if not df_leads.empty and "month" in df_leads.columns else df_leads
+    month_quotes = df_quotes if not df_quotes.empty else pd.DataFrame()
 
-    c1, c2 = st.columns(2)
+    total_sales = 0.0
+    if not df_quotes.empty and "quotation_amount" in df_quotes.columns:
+        total_sales = pd.to_numeric(df_quotes["quotation_amount"], errors="coerce").fillna(0).sum()
+
+    st.markdown(f"##### 📊 Performance Snapshot ({current_month_str} {today.year})")
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.subheader("📊 Lead Sources Distribution")
-        if not df_leads.empty and "source" in df_leads.columns:
-            source_counts = df_leads["source"].value_counts().reset_index()
-            source_counts.columns = ["Source", "Count"]
-            fig1 = px.pie(source_counts, values="Count", names="Source")
-            st.plotly_chart(fig1, use_container_width=True)
-
+        st.metric("Current Month Leads", len(month_leads))
     with c2:
-        st.subheader("⏱️ SLA Cutoff Distribution")
-        if not df_quotes.empty and "is_after_cutoff" in df_quotes.columns:
-            sla_counts = df_quotes["is_after_cutoff"].value_counts().reset_index()
-            sla_counts.columns = ["After 5:30 PM Cutoff", "Count"]
-            fig2 = px.bar(sla_counts, x="After 5:30 PM Cutoff", y="Count")
-            st.plotly_chart(fig2, use_container_width=True)
+        st.metric("Total System Ingested Leads", len(df_leads))
+    with c3:
+        st.metric("Quotations Issued", len(df_quotes))
+    with c4:
+        st.metric("Total Sales Value", f"₹{total_sales:,.0f}")
 
-    st.divider()
-    st.subheader("👥 User Management & RBAC")
-    tab1, tab2 = st.tabs(["Directory", "Add User"])
-    with tab1:
-        render_interactive_table(df_users, key="admin_users_table")
-    with tab2:
-        with st.form("add_user_form"):
-            u_id = st.text_input("User ID (e.g., U109)")
-            u_name = st.text_input("Full Name")
-            u_email = st.text_input("Email")
-            u_role = st.selectbox("Role", ["LGE", "QS", "SAM", "ADMIN"])
+    st.markdown("---")
+    st.markdown("##### 📋 System Ingested Leads Master View")
+    st.dataframe(df_leads, use_container_width=True, hide_index=True)
 
-            if st.form_submit_button("Create User"):
-                db.insert_row(
-                    "users",
-                    {
-                        "user_id": u_id,
-                        "full_name": u_name,
-                        "email": u_email,
-                        "role": u_role,
-                        "created_at": datetime.now().strftime("%Y-%m-%d"),
-                    },
-                )
-                st.success(f"User {u_name} registered!")
+
+def render_user_management(db_adapter, current_user):
+    st.markdown("<h2 style='color:#0E2C68; font-weight:800;'>👥 User Management Governance</h2>", unsafe_allow_html=True)
+
+    df_users = db_adapter.fetch_all("users")
+
+    st.markdown("##### ➕ Add New Employee Profile")
+    with st.form("add_user_form_admin", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            u_username = st.text_input("Username / ID *").strip().lower()
+            u_password = st.text_input("Password *", type="password")
+        with c2:
+            u_role = st.selectbox("Role *", ["ADMIN", "LGE", "QS", "SAM", "OPERATIONS"])
+            u_fullname = st.text_input("Full Name *")
+
+        if st.form_submit_button("💾 Create User Account"):
+            if u_username and u_password and u_fullname:
+                new_u = {
+                    "user_id": f"U{len(df_users)+101}",
+                    "full_name": u_fullname,
+                    "email": f"{u_username}@sidharth.com",
+                    "password": u_password,
+                    "role": u_role
+                }
+                db_adapter.insert_row("users", new_u)
+                st.toast(f"✅ User account '{u_username}' created successfully!", icon="🎉")
                 st.rerun()
+            else:
+                st.error("Please fill in all mandatory fields.")
+
+    st.markdown("---")
+    if st.button("📋 Click to View / Export Registered User Accounts Sheet"):
+        st.dataframe(df_users, use_container_width=True, hide_index=True)
