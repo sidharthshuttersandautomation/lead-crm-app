@@ -1,5 +1,5 @@
 """
-components/styles.py - Custom Styling for High-Contrast Readability.
+components/styles.py - Brand Palette & High-Contrast Disabled Fields CSS
 """
 import streamlit as st
 
@@ -14,14 +14,17 @@ def apply_custom_theme():
             color: #0E2C68 !important;
         }
 
-        /* High-Contrast Disabled Auto-Fetched Input Fields */
+        /* HIGH-CONTRAST AUTO-FETCHED DISABLED INPUT FIELDS */
         div[data-baseweb="input"] input:disabled,
-        div[data-baseweb="base-input"] input:disabled {
-            background-color: #EFF6FF !important;
+        div[data-baseweb="base-input"] input:disabled,
+        .stTextInput input:disabled {
+            background-color: #E2E8F0 !important;
             color: #0E2C68 !important;
             -webkit-text-fill-color: #0E2C68 !important;
-            font-weight: 700 !important;
-            border: 1.5px solid #184B9C !important;
+            font-weight: 800 !important;
+            font-size: 14.5px !important;
+            border: 2px solid #184B9C !important;
+            border-radius: 8px !important;
             opacity: 1 !important;
         }
 

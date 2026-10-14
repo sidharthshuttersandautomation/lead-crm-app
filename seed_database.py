@@ -1,8 +1,9 @@
 """
-Relational Database Seeder for Sidharth Shutter & Automation CRM.
-Creates employees, products, customers, leads_master, quotations_master, and followup_logs.
+seed_database.py - Generates 50+ Real-World Test Records for Sidharth Shutter CRM.
 """
+import random
 import sqlite3
+import datetime
 
 DB_PATH = "crm_database.db"
 
@@ -31,16 +32,20 @@ DEFAULT_PRODUCTS = [
     ("Service Charge", "Services")
 ]
 
-RAW_CLIENT_LEADS = [
-    ("BID-Oct-26-001", "Mr Omprakash", "", "5103316010", "om@neravu.com", "134 sobha legacy Devanahalli Bangalore", "Bangalore", "Karnataka", "Overhead Sectional Door", 2, "Whats App", "EMP-101", "EMP-105", "Done", "Not Sent"),
-    ("BID-Oct-26-002", "Mr Neeraj", "", "9601266130", "", "punjab", "Punjab", "Punjab", "Motors", 1, "Phone Call", "EMP-101", "EMP-105", "Done", "Not Sent"),
-    ("BID-Oct-26-003", "Mr Venektesh", "", "9039095870", "", "Bengaluru, Karnataka, India", "Bangalore", "Karnataka", "Motors", 1, "India Mart", "EMP-101", "EMP-105", "Done", "Not Sent"),
-    ("BID-Oct-26-005", "Mr Baljeet", "Blue Cold Refrigeration Pvt. Ltd.", "9972618426", "projects.blr2@bluecoldref.com", "Plant at RIICO Industrial area, Bhiwadi", "Bhiwadi", "Rajasthan", "Dock Leveller", 6, "Enquiry Email", "EMP-101", "EMP-105", "Done", "Sent"),
-    ("BID-Oct-26-006", "N/A", "KANAK ENGINEERING AND TRADING CO.", "7428531318", "kanak_engineering@yahoo.com", "1/5111, GALI NO.4, BALBIR NAGAR , SHAHDARA DELHI", "Delhi", "Delhi", "High-Speed Roll Up Door", 10, "Whats App", "EMP-101", "EMP-105", "Done", "Sent"),
-    ("BID-Oct-26-010", "Mr Rahul Gupta", "Rahul trading co", "9707214967", "rahultradingcompany.info@gmail.com", "Guwhati Assam", "Assam", "Assam", "Boom Barriers", 6, "Whats App", "EMP-101", "EMP-105", "Done", "Sent")
+FIRST_NAMES = ["Rajesh", "Vikram", "Sanjay", "Anil", "Amit", "Pankaj", "Rohan", "Sunil", "Manish", "Deepak", "Rakesh", "Suresh", "Alok", "Vikas", "Gaurav"]
+LAST_NAMES = ["Sharma", "Verma", "Gupta", "Patel", "Jain", "Mehta", "Singh", "Agarwal", "Chawla", "Bhatia", "Kulkarni", "Reddy", "Nair", "Rao", "Joshi"]
+COMPANY_PREFIXES = ["Apex", "Reliance", "Tata", "Blue Star", "Mahindra", "Suzlon", "Godrej", "Adani", "Larsen", "Kirloskar", "Thermax", "Havel's", "Finolex", "Voltas", "Polycab"]
+COMPANY_SUFFIXES = ["Industries", "Logistics Pvt Ltd", "Automation Co", "Engineering Solutions", "Pharma Ltd", "Cold Storage", "Infra", "Motors", "Traders", "Enterprises"]
+CITIES_STATES = [
+    ("Indore", "Madhya Pradesh"), ("Bhopal", "Madhya Pradesh"), ("Bangalore", "Karnataka"),
+    ("Pune", "Maharashtra"), ("Mumbai", "Maharashtra"), ("Ahmedabad", "Gujarat"),
+    ("Delhi", "Delhi"), ("Gurgaon", "Haryana"), ("Jaipur", "Rajasthan"), ("Hyderabad", "Telangana")
 ]
+SOURCES = ["IndiaMart", "WhatsApp", "Phone Call", "Enquiry Email", "Direct Visit"]
+SAM_IDS = ["EMP-105", "EMP-106", "EMP-107"]
+QS_IDS = ["EMP-102", "EMP-103", "EMP-104"]
 
-def seed_relational_database():
+def seed_large_database():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -51,6 +56,7 @@ def seed_relational_database():
     cursor.execute("DROP TABLE IF EXISTS products")
     cursor.execute("DROP TABLE IF EXISTS employees")
 
+    # 1. Employees
     cursor.execute("""
     CREATE TABLE employees (
         employee_id TEXT PRIMARY KEY,
@@ -64,6 +70,7 @@ def seed_relational_database():
     """)
     cursor.executemany("INSERT INTO employees (employee_id, full_name, email, password, role) VALUES (?, ?, ?, ?, ?)", DEFAULT_EMPLOYEES)
 
+    # 2. Products
     cursor.execute("""
     CREATE TABLE products (
         product_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,6 +81,7 @@ def seed_relational_database():
     """)
     cursor.executemany("INSERT INTO products (product_name, category) VALUES (?, ?)", DEFAULT_PRODUCTS)
 
+    # 3. Customers
     cursor.execute("""
     CREATE TABLE customers (
         client_id TEXT PRIMARY KEY,
@@ -88,6 +96,7 @@ def seed_relational_database():
     )
     """)
 
+    # 4. Leads Master
     cursor.execute("""
     CREATE TABLE leads_master (
         lead_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -113,6 +122,7 @@ def seed_relational_database():
     )
     """)
 
+    # 5. Quotations Master
     cursor.execute("""
     CREATE TABLE quotations_master (
         quotation_id TEXT PRIMARY KEY,
@@ -138,6 +148,7 @@ def seed_relational_database():
     )
     """)
 
+    # 6. Followup Logs
     cursor.execute("""
     CREATE TABLE followup_logs (
         followup_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -156,37 +167,63 @@ def seed_relational_database():
     )
     """)
 
-    for idx, item in enumerate(RAW_CLIENT_LEADS, start=1):
-        cid, cname, comp, phone, email, addr, city, state, prod_name, qty, source, lge_id, sam_id, fstat, qstat = item
+    random.seed(42)
+    base_date = datetime.date(2026, 10, 1)
 
-        cursor.execute("INSERT OR IGNORE INTO customers VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)", (cid, cname, comp, phone, email, addr, city, state))
+    print("⚡ Generating 50 fake test records...")
+    for i in range(1, 51):
+        cid = f"BID-Oct-26-{i:03d}"
+        cname = f"Mr {random.choice(FIRST_NAMES)} {random.choice(LAST_NAMES)}"
+        comp = f"{random.choice(COMPANY_PREFIXES)} {random.choice(COMPANY_SUFFIXES)}"
+        phone = f"9{random.randint(100000000, 999999999)}"
+        email = f"{cname.split()[-1].lower()}@{comp.split()[0].lower()}.com"
+        city, state = random.choice(CITIES_STATES)
+        addr = f"Plot No {random.randint(10, 250)}, Industrial Area Phase {random.randint(1, 4)}"
 
-        cursor.execute("SELECT product_id FROM products WHERE product_name = ?", (prod_name,))
-        p_row = cursor.fetchone()
-        pid = p_row[0] if p_row else 1
+        # Insert Customer
+        cursor.execute("INSERT INTO customers VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)", (cid, cname, comp, phone, email, addr, city, state))
 
+        pid = random.randint(1, len(DEFAULT_PRODUCTS))
+        prod_name = DEFAULT_PRODUCTS[pid - 1][0]
+        qty = random.randint(1, 8)
+        src = random.choice(SOURCES)
+        sam_id = random.choice(SAM_IDS)
+
+        # 60% leads have quotations sent, 40% unassigned
+        is_quoted = i <= 30
+        qstat = "Sent" if is_quoted else "Not Sent"
+        claimed_qs = random.choice(QS_IDS) if is_quoted else "Unassigned"
+        fstat = random.choice(["Under Discussion", "Done", "Under Review"]) if is_quoted else "Under Discussion"
+
+        ingest_dt = str(base_date + datetime.timedelta(days=(i % 14)))
+
+        # Insert Lead
         cursor.execute("""
-        INSERT INTO leads_master (client_id, product_id, quantity, source, final_status, quotation_status, handled_by_lge_id, assigned_sam_id, claimed_qs_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (cid, pid, qty, source, fstat, qstat, lge_id, sam_id, "EMP-102" if qstat == "Sent" else "Unassigned"))
+        INSERT INTO leads_master (client_id, product_id, quantity, source, final_status, quotation_status, handled_by_lge_id, assigned_sam_id, ingestion_date, claimed_qs_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (cid, pid, qty, src, fstat, qstat, "EMP-101", sam_id, ingest_dt, claimed_qs))
 
         lead_id = cursor.lastrowid
 
-        if qstat == "Sent":
-            q_num = f"SSAPL/2026-27/{840 + idx}"
+        # Insert Quotation if quoted
+        if is_quoted:
+            q_num = f"SSAPL/2026-27/{840 + i}"
+            amount = round(random.uniform(25000.0, 450000.0), 2)
+            rev_str = random.choice(["No", "Yes - R1", "Yes - R2", "Yes - R3"])
             cursor.execute("""
-            INSERT INTO quotations_master (quotation_id, lead_id, client_id, quotation_number, qut_amount, quotation_status, claimed_qs_id, shared_by_id, company_name_1)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (f"QUO-{idx:04d}", lead_id, cid, q_num, 53100.0, "Approved", "EMP-102", "EMP-102", comp))
+            INSERT INTO quotations_master (quotation_id, lead_id, client_id, quotation_number, revised, qut_amount, quotation_status, claimed_qs_id, shared_by_id, company_name_1, approved_date, approved_month)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (f"QUO-{i:04d}", lead_id, cid, q_num, rev_str, amount, "Approved", claimed_qs, claimed_qs, comp, ingest_dt, "October"))
 
+        # Log initial follow-up
         cursor.execute("""
         INSERT INTO followup_logs (lead_id, employee_id, followup_status, notes)
         VALUES (?, ?, ?, ?)
-        """, (lead_id, lge_id, fstat, f"Initial lead ingested for {cname}"))
+        """, (lead_id, "EMP-101", fstat, f"Initial lead ingested for {cname}"))
 
     conn.commit()
     conn.close()
-    print("✅ Database successfully seeded matching clean relational schema!")
+    print("✅ Successfully generated 50 test records in crm_database.db!")
 
 if __name__ == "__main__":
-    seed_relational_database()
+    seed_large_database()

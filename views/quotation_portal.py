@@ -1,11 +1,10 @@
 """
-views/quotation_portal.py - Quotation Specialist Workspace.
+views/quotation_portal.py - Quotation Specialist Workstation.
 """
 import datetime
 import pandas as pd
 import streamlit as st
 from config.settings import TEAM_MEMBERS, IST
-from components.follow_up_cards import render_follow_up_card
 
 
 def get_current_ist_time():
@@ -86,7 +85,7 @@ def render_qs_performance_dashboard(db_adapter, current_user):
             all_cols = list(df_quotes.columns)
             selected_cols = st.multiselect("Select Columns to Include in Export:", all_cols, default=all_cols)
             filtered_quotes = df_quotes[selected_cols] if selected_cols else df_quotes
-            st.dataframe(filtered_quotes, use_container_width=True, hide_index=True)
+            st.dataframe(filtered_quotes, width="stretch", hide_index=True)
 
 
 def render_qs_generator_and_claim(db_adapter, current_user):
@@ -168,6 +167,7 @@ def render_qs_detailed_form_entry(db_adapter, current_user):
 def _render_quotation_form_body(db_adapter, lead_row, df_quotes, qs_id, qs_name, from_claim_tab=False):
     now_dt = get_current_ist_time()
     cid = str(lead_row.get("client_id", ""))
+    current_month_str = now_dt.strftime("%B")
 
     st.markdown("###### 🔄 Automatically Fetched Details from Lead Sheet")
     c1, c2, c3 = st.columns(3)
@@ -188,12 +188,24 @@ def _render_quotation_form_body(db_adapter, lead_row, df_quotes, qs_id, qs_name,
     st.markdown("---")
     st.markdown("###### ✍️ Manual & Operational Quotation Inputs")
 
+    revised_options = [
+        "Choose...",
+        "No",
+        "Yes - R1",
+        "Yes - R2",
+        "Yes - R3",
+        "Yes - R4",
+        "Yes - R5",
+        "Yes - R6",
+        "Yes - R7"
+    ]
+
     with st.form(f"quotation_entry_form_{lead_row.get('lead_id')}"):
         m1, m2, m3 = st.columns(3)
         with m1:
             q_num = st.text_input("Quotation Number *", value=f"SSAPL/2026-27/{len(df_quotes)+841}")
             q_amount = st.number_input("Qut. Amount (INR) *", min_value=0.0, value=50000.0)
-            revised = st.selectbox("Revised *", ["Choose...", "No", "Yes - R1", "Yes - R2"], index=0)
+            revised = st.selectbox("Revised *", revised_options, index=0)
             q_status = st.selectbox("Quotation Status *", ["Choose...", "Approved", "Under Review", "Rejected"], index=0)
         with m2:
             follow_req = st.selectbox("Follow Up Required *", ["Choose...", "Yes", "No"], index=0)
@@ -204,9 +216,8 @@ def _render_quotation_form_body(db_adapter, lead_row, df_quotes, qs_id, qs_name,
             q_shared_by = st.selectbox("Quotation Shared By *", ["Choose..."] + TEAM_MEMBERS, index=0)
             approved_date = st.date_input("Approved Date", value=now_dt.date())
             comp_name_1 = st.text_input("Company Name-1", value=str(lead_row.get("company_name", "")))
-            approved_month = st.text_input("Approved Month", value=now_dt.strftime("%B"))
+            approved_month = st.text_input("Approved Month *", value=current_month_str)
 
-        # DYNAMIC FOLLOW-UP SCHEDULER
         if follow_req == "Yes":
             st.markdown("###### ⏰ Schedule Next Follow-up Call Reminder")
             f_col1, f_col2 = st.columns(2)
@@ -263,6 +274,7 @@ def _render_quotation_form_body(db_adapter, lead_row, df_quotes, qs_id, qs_name,
 def render_qs_followup_workday(db_adapter, current_user):
     st.markdown("<h2 style='color:#0E2C68; font-weight:800;'>⚡ Follow-up Queue & Workday</h2>", unsafe_allow_html=True)
     qs_name = current_user.get("name") or "Quotation Specialist"
+    now_ist = get_current_ist_time()
 
     df_leads = db_adapter.fetch_all("leads_master")
     df_logs = db_adapter.fetch_all("followup_logs")
@@ -277,28 +289,5 @@ def render_qs_followup_workday(db_adapter, current_user):
         st.info("🎉 All follow-up tasks completed! No active leads remaining.")
         return
 
-    for idx, row in active_queue.iterrows():
-        lead_id = row.get("lead_id")
-        cid = str(row.get("client_id", "N/A"))
-        cname = str(row.get("client_name", "Client"))
-        addr = str(row.get("address", "N/A"))
-        cty = str(row.get("city", "N/A"))
-        prod = str(row.get("product", "Automation"))
-
-        past_logs = df_logs[df_logs["lead_id"] == lead_id] if not df_logs.empty else pd.DataFrame()
-        log_count = len(past_logs) if not past_logs.empty else 1
-        history_remarks = list(past_logs["notes"].astype(str)) if not past_logs.empty else ["Initial contact logged"]
-
-        render_follow_up_card(
-            db_adapter=db_adapter,
-            client_id=cid,
-            client_name=cname,
-            address=addr,
-            city=cty,
-            product=prod,
-            last_price=50000.0,
-            followups_count=log_count,
-            remarks_history=history_remarks,
-            current_user_name=qs_name,
-            key=f"qs_fol_card_{lead_id}"
-        )
+    from components.follow_up_cards import render_time_slot_workday_queue
+    render_time_slot_workday_queue(db_adapter, active_queue, df_logs, qs_name, now_ist)

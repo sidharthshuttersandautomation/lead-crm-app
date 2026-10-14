@@ -1,5 +1,5 @@
 """
-app.py - Sidharth Shutter CRM Entry Point & Navigation Router.
+app.py - Main Streamlit Application Router
 """
 import sys
 from pathlib import Path
@@ -39,6 +39,7 @@ apply_custom_theme()
 db_adapter = SQLiteAdapter()
 init_session_auth()
 
+# Centered Login Card
 if not st.session_state.get("authenticated", False):
     st.markdown("<br><br>", unsafe_allow_html=True)
     c_left, c_center, c_right = st.columns([1, 1.6, 1])
@@ -46,7 +47,7 @@ if not st.session_state.get("authenticated", False):
     with c_center:
         st.markdown("<div class='saas-card' style='text-align: center; padding: 30px;'>", unsafe_allow_html=True)
         try:
-            st.image("Company Logo.jpeg", use_container_width=True)
+            st.image("Company Logo.jpeg", width="stretch")
         except Exception:
             st.markdown("<h2 style='color: #184B9C; font-weight: 800; margin-bottom: 0;'>SIDHARTH SHUTTER</h2>", unsafe_allow_html=True)
 
@@ -68,6 +69,7 @@ if not st.session_state.get("authenticated", False):
         st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
+# Main Workspace Navigation
 user = get_current_user()
 render_navbar(user)
 
@@ -87,7 +89,7 @@ initials = "".join([p[0].upper() for p in user_name.strip().split()[:2]]) if use
 with st.sidebar:
     st.markdown("<div style='background-color: #FFFFFF; padding: 12px; border-radius: 12px; margin-bottom: 15px; text-align: center;'>", unsafe_allow_html=True)
     try:
-        st.image("Company Logo.jpeg", use_container_width=True)
+        st.image("Company Logo.jpeg", width="stretch")
     except Exception:
         st.markdown("<h3 style='color:#184B9C; font-weight:800; margin:0;'>SIDHARTH SHUTTER</h3>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
@@ -119,7 +121,6 @@ with st.sidebar:
         available_views["📊 Employee Report Card"] = render_employee_report
 
     elif user_role in ["QS"]:
-        # EXPANDED NAVIGATION FOR QUOTATION SPECIALISTS
         available_views["📈 Performance & Progress Control"] = render_qs_performance_dashboard
         available_views["📄 Quotation Generator & Convert"] = render_qs_generator_and_claim
         available_views["📝 Detailed Quotation Form Entry"] = render_qs_detailed_form_entry
@@ -147,7 +148,7 @@ with st.sidebar:
 
     st.markdown("<br><hr style='border:none; border-top:1px solid rgba(255,255,255,0.15); margin-bottom: 12px;'>", unsafe_allow_html=True)
 
-    if st.sidebar.button("🚪 Logout", use_container_width=True, key="single_app_logout_btn"):
+    if st.sidebar.button("🚪 Logout", width="stretch", key="single_app_logout_btn"):
         logout_user()
         st.rerun()
 
