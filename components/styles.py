@@ -1,5 +1,5 @@
 """
-components/styles.py - Brand Theme CSS
+components/styles.py - Custom Styling for High-Contrast Readability.
 """
 import streamlit as st
 
@@ -14,7 +14,18 @@ def apply_custom_theme():
             color: #0E2C68 !important;
         }
 
-        /* Sidebar Theme */
+        /* High-Contrast Disabled Auto-Fetched Input Fields */
+        div[data-baseweb="input"] input:disabled,
+        div[data-baseweb="base-input"] input:disabled {
+            background-color: #EFF6FF !important;
+            color: #0E2C68 !important;
+            -webkit-text-fill-color: #0E2C68 !important;
+            font-weight: 700 !important;
+            border: 1.5px solid #184B9C !important;
+            opacity: 1 !important;
+        }
+
+        /* Sidebar Styling */
         [data-testid="stSidebar"] {
             background: linear-gradient(180deg, #184B9C 0%, #0E2C68 100%) !important;
             border-right: 1px solid rgba(255, 255, 255, 0.1) !important;
@@ -30,7 +41,7 @@ def apply_custom_theme():
             border-radius: 8px !important;
         }
 
-        /* VIBRANT GREEN GRADIENT FOR ALL LOGOUT & FORM SUBMIT BUTTONS */
+        /* Vibrant Green Gradient Submit Buttons */
         div.stButton > button,
         div[data-testid="stFormSubmitButton"] > button {
             background: linear-gradient(135deg, #00A859 0%, #008F4C 100%) !important;

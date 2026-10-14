@@ -98,15 +98,19 @@ For Admin Portal: Re arrange the Tabs in Navigation Tab.
 		- Give the Add New Employee Option and excel Sheet Must be displayed by Clicking on a button below Add a new user.
 		- User Can be created by Admin only.
 		- user Id is automatically generated. 
-
-For Quotation Portal: Shift the tabs to Navigation Tab.
-	- Main dashbard: They must get the details of the clients to make the quotation in the form of notification. If the Client is assigned till 5:30 pm
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+For Quotation Portal: Shift the tabs to 📈 Performance & Progress Control, 📄 Quotation Generator & Convert, 📝 Detailed Quotation Form Entry, Follow Up to Navigation Tab.
+	- 📈 Performance & Progress Control: On the Main Darhboard when they login Comes their progress and tasks, notifications appears. 
+		- Make the Kpis more attractive and in box
+		- For the excel sheet they have the option of filters and then download it. Can select columns according to the requirement.
+		- Main dashbard: They must get the details of the clients to make the quotation in the form of notification. If the Client is assigned till 5:30 pm
 			 for that particuar client the quotation must be sent on the same day. But if its after that it shifted to next day in notifications.
+		- The Report of the employees must be displayed so that they know their record. There must be filters as well to dive into the time of reports like 1 week, 2 week, 15 days, 1,3,6,9,12 moth or a particular date range
 
-	- 📝 Quotation Desk Portal: Re arrange the tabs. Shift them to nagivation tab.
-	- 📈 Performance & Progress Control: 
+	- 📝 Quotation Desk Portal: Re arrange the tabs and Shift them to nagivation tab.
+	 
 
-	- ⚡ Follow-up Queue & Workday: This is mostly dynamic. 	
+	- ⚡ Follow-up Queue & Workday: This is mostly dynamic shows details. If someone selects the Follow up Required then it automatically asks for the date and time give by the client so that they can have the reminder. If no details are entered then automatically after 3 days reminder is set. 	
 		- In this I want that an Auto reminder comes after 3 days from the previous call.
 		- if the client asks to call at a particular time or at a particullar day make sure they have note it down and there is a particular reminder for that.
 		- The data must appear in cards and in those cards details are shown. The cards must contain the number of follow ups taken.
@@ -114,12 +118,11 @@ For Quotation Portal: Shift the tabs to Navigation Tab.
 		- These follow up counts must be shown in the report of the employee for admin.
 		- An employee must take follow ups.
 
-	- 📥 Add New Lead: Same as admin.
-
-	- 📄 Quotation Generator & Convert: Same as the Admin.
-
-	- 🔍 Client Inspector: Same as the Admin.
-
+	- 📥 Add New Lead: Same as Lead Executive Shift this tab to Navigation Tab.
+	- 📄 Quotation Generator & Convert: Once the Quotation is claimed they automatically have to create the quotation and after completing they previous one only they can take the next quotaion. 
+		- Detailed Quotation Form Entry: Display the Client Name and Client Company as well with Bid numbers it will be easy to so. 
+		- Once the lead got converted or got lost thendon't display the data dynamicaly in the tab 
+		- Select Client ID to Auto-Fetch Lead Details: in this one can also write bid id, or client name, or client company and get the whole details.
 For Lead Generation Executive:
 	- Shift the tabs to Navigation Tab.
 	📈 Admin Performance & Progress Control: In this Show Lead Executive their performance report with KPI's
