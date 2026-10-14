@@ -1,5 +1,5 @@
 """
-app.py - Main Streamlit Application Router
+app.py - Main Router with Exact Admin Workspace Navigation Hierarchy.
 """
 import sys
 from pathlib import Path
@@ -21,6 +21,7 @@ from views.quotation_portal import (
     render_qs_detailed_form_entry,
     render_qs_followup_workday,
 )
+from views.employee_progress import render_my_progress_report
 from views.sales_portal import render_sales_portal
 from views.process_order_portal import render_process_portal
 from views.client_inspector import render_client_inspector
@@ -39,7 +40,6 @@ apply_custom_theme()
 db_adapter = SQLiteAdapter()
 init_session_auth()
 
-# Centered Login Card
 if not st.session_state.get("authenticated", False):
     st.markdown("<br><br>", unsafe_allow_html=True)
     c_left, c_center, c_right = st.columns([1, 1.6, 1])
@@ -69,7 +69,6 @@ if not st.session_state.get("authenticated", False):
         st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
-# Main Workspace Navigation
 user = get_current_user()
 render_navbar(user)
 
@@ -108,8 +107,9 @@ with st.sidebar:
 
     available_views = {}
     if user_role in ["ADMIN", "ADMINISTRATOR"]:
+        # EXACT ORDER FOR ADMIN PORTAL
         available_views["🛡️ Admin Control Center"] = render_admin_portal
-        available_views["👥 User Management"] = render_user_management
+        available_views["📊 My Progress Report"] = render_my_progress_report
         available_views["📥 Lead Generation Portal"] = render_lead_portal
         available_views["📈 Performance & Progress Control"] = render_qs_performance_dashboard
         available_views["📄 Quotation Generator & Convert"] = render_qs_generator_and_claim
@@ -117,29 +117,34 @@ with st.sidebar:
         available_views["⚡ Follow-up Queue & Workday"] = render_qs_followup_workday
         available_views["💼 Sales Management Portal"] = render_sales_portal
         available_views["⚙️ Order Fulfillment"] = render_process_portal
-        available_views["🔍 Client Inspector"] = render_client_inspector
         available_views["📊 Employee Report Card"] = render_employee_report
+        available_views["👥 User Management"] = render_user_management
+        available_views["🔍 Client Inspector"] = render_client_inspector
 
     elif user_role in ["QS"]:
-        available_views["📈 Performance & Progress Control"] = render_qs_performance_dashboard
+        available_views["📊 Quotation Control & Inbound Desk"] = render_qs_performance_dashboard
+        available_views["📥 Add New Lead"] = render_lead_portal
         available_views["📄 Quotation Generator & Convert"] = render_qs_generator_and_claim
         available_views["📝 Detailed Quotation Form Entry"] = render_qs_detailed_form_entry
         available_views["⚡ Follow-up Queue & Workday"] = render_qs_followup_workday
-        available_views["📥 Add New Lead"] = render_lead_portal
         available_views["🔍 Client Inspector"] = render_client_inspector
+        available_views["📊 My Progress Report"] = render_my_progress_report
 
     elif user_role in ["LGE"]:
         available_views["📥 Lead Generation Portal"] = render_lead_portal
         available_views["⚡ Follow-up Queue & Workday"] = render_qs_followup_workday
         available_views["🔍 Client Inspector"] = render_client_inspector
+        available_views["📊 My Progress Report"] = render_my_progress_report
 
     elif user_role in ["SAM"]:
         available_views["💼 Sales Management Portal"] = render_sales_portal
         available_views["🔍 Client Inspector"] = render_client_inspector
+        available_views["📊 My Progress Report"] = render_my_progress_report
 
     elif user_role in ["OPERATIONS"]:
         available_views["⚙️ Order Fulfillment"] = render_process_portal
         available_views["🔍 Client Inspector"] = render_client_inspector
+        available_views["📊 My Progress Report"] = render_my_progress_report
 
     else:
         available_views["🛡️ Admin Control Center"] = render_admin_portal

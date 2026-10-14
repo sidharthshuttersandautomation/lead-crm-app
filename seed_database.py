@@ -1,5 +1,5 @@
 """
-seed_database.py - Generates 50+ Real-World Test Records for Sidharth Shutter CRM.
+seed_database.py - Oct 1-14, 2026 Comprehensive Test Dataset Generator.
 """
 import random
 import sqlite3
@@ -32,10 +32,12 @@ DEFAULT_PRODUCTS = [
     ("Service Charge", "Services")
 ]
 
-FIRST_NAMES = ["Rajesh", "Vikram", "Sanjay", "Anil", "Amit", "Pankaj", "Rohan", "Sunil", "Manish", "Deepak", "Rakesh", "Suresh", "Alok", "Vikas", "Gaurav"]
-LAST_NAMES = ["Sharma", "Verma", "Gupta", "Patel", "Jain", "Mehta", "Singh", "Agarwal", "Chawla", "Bhatia", "Kulkarni", "Reddy", "Nair", "Rao", "Joshi"]
-COMPANY_PREFIXES = ["Apex", "Reliance", "Tata", "Blue Star", "Mahindra", "Suzlon", "Godrej", "Adani", "Larsen", "Kirloskar", "Thermax", "Havel's", "Finolex", "Voltas", "Polycab"]
-COMPANY_SUFFIXES = ["Industries", "Logistics Pvt Ltd", "Automation Co", "Engineering Solutions", "Pharma Ltd", "Cold Storage", "Infra", "Motors", "Traders", "Enterprises"]
+FIRST_NAMES = ["Rajesh", "Vikram", "Sanjay", "Anil", "Amit", "Pankaj", "Rohan", "Sunil", "Manish", "Deepak", "Naresh", "Neeraj", "Omprakash", "Venktesh", "Gaurav"]
+LAST_NAMES = ["Sharma", "Verma", "Gupta", "Patel", "Jain", "Mehta", "Singh", "Agarwal", "Chawla", "Bhatia", "Tahiliani", "Sethiya", "Joshi", "Reddy", "Rao"]
+COMPANIES = [
+    "Insolation Green Energy Pvt Ltd", "Blue Cold Reftech", "Sobha Legacy Devanahalli", "Apex Logistics", 
+    "Reliance Infra", "Tata Motors", "Mahindra Auto", "Godrej Cold Storage", "Suzlon Energy", "Kirloskar Engineering"
+]
 CITIES_STATES = [
     ("Indore", "Madhya Pradesh"), ("Bhopal", "Madhya Pradesh"), ("Bangalore", "Karnataka"),
     ("Pune", "Maharashtra"), ("Mumbai", "Maharashtra"), ("Ahmedabad", "Gujarat"),
@@ -45,7 +47,10 @@ SOURCES = ["IndiaMart", "WhatsApp", "Phone Call", "Enquiry Email", "Direct Visit
 SAM_IDS = ["EMP-105", "EMP-106", "EMP-107"]
 QS_IDS = ["EMP-102", "EMP-103", "EMP-104"]
 
-def seed_large_database():
+# Precise time slot hours for testing slot filters
+SLOT_HOURS = [9, 10, 11, 12, 14, 15, 16, 17, 18, 19]
+
+def seed_october_data():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -56,7 +61,7 @@ def seed_large_database():
     cursor.execute("DROP TABLE IF EXISTS products")
     cursor.execute("DROP TABLE IF EXISTS employees")
 
-    # 1. Employees
+    # 1. Employees Table
     cursor.execute("""
     CREATE TABLE employees (
         employee_id TEXT PRIMARY KEY,
@@ -70,7 +75,7 @@ def seed_large_database():
     """)
     cursor.executemany("INSERT INTO employees (employee_id, full_name, email, password, role) VALUES (?, ?, ?, ?, ?)", DEFAULT_EMPLOYEES)
 
-    # 2. Products
+    # 2. Products Table
     cursor.execute("""
     CREATE TABLE products (
         product_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,7 +86,7 @@ def seed_large_database():
     """)
     cursor.executemany("INSERT INTO products (product_name, category) VALUES (?, ?)", DEFAULT_PRODUCTS)
 
-    # 3. Customers
+    # 3. Customers Table
     cursor.execute("""
     CREATE TABLE customers (
         client_id TEXT PRIMARY KEY,
@@ -96,7 +101,7 @@ def seed_large_database():
     )
     """)
 
-    # 4. Leads Master
+    # 4. Leads Master Table
     cursor.execute("""
     CREATE TABLE leads_master (
         lead_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -113,16 +118,14 @@ def seed_large_database():
         remarks TEXT,
         handled_by_lge_id TEXT,
         assigned_sam_id TEXT,
-        ingestion_date DATE DEFAULT CURRENT_DATE,
+        ingestion_date DATE DEFAULT '2026-10-14',
         claimed_qs_id TEXT DEFAULT 'Unassigned',
         FOREIGN KEY (client_id) REFERENCES customers(client_id),
-        FOREIGN KEY (product_id) REFERENCES products(product_id),
-        FOREIGN KEY (handled_by_lge_id) REFERENCES employees(employee_id),
-        FOREIGN KEY (assigned_sam_id) REFERENCES employees(employee_id)
+        FOREIGN KEY (product_id) REFERENCES products(product_id)
     )
     """)
 
-    # 5. Quotations Master
+    # 5. Quotations Master Table
     cursor.execute("""
     CREATE TABLE quotations_master (
         quotation_id TEXT PRIMARY KEY,
@@ -142,13 +145,11 @@ def seed_large_database():
         approved_date DATE,
         approved_month TEXT,
         created_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (lead_id) REFERENCES leads_master(lead_id),
-        FOREIGN KEY (client_id) REFERENCES customers(client_id),
-        FOREIGN KEY (claimed_qs_id) REFERENCES employees(employee_id)
+        FOREIGN KEY (lead_id) REFERENCES leads_master(lead_id)
     )
     """)
 
-    # 6. Followup Logs
+    # 6. Followup Logs Table
     cursor.execute("""
     CREATE TABLE followup_logs (
         followup_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -162,68 +163,86 @@ def seed_large_database():
         scheduled_call_time TIMESTAMP,
         notes TEXT NOT NULL,
         logged_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (lead_id) REFERENCES leads_master(lead_id),
-        FOREIGN KEY (employee_id) REFERENCES employees(employee_id)
+        FOREIGN KEY (lead_id) REFERENCES leads_master(lead_id)
     )
     """)
 
-    random.seed(42)
-    base_date = datetime.date(2026, 10, 1)
+    random.seed(101)
+    record_counter = 1
 
-    print("⚡ Generating 50 fake test records...")
-    for i in range(1, 51):
-        cid = f"BID-Oct-26-{i:03d}"
-        cname = f"Mr {random.choice(FIRST_NAMES)} {random.choice(LAST_NAMES)}"
-        comp = f"{random.choice(COMPANY_PREFIXES)} {random.choice(COMPANY_SUFFIXES)}"
-        phone = f"9{random.randint(100000000, 999999999)}"
-        email = f"{cname.split()[-1].lower()}@{comp.split()[0].lower()}.com"
-        city, state = random.choice(CITIES_STATES)
-        addr = f"Plot No {random.randint(10, 250)}, Industrial Area Phase {random.randint(1, 4)}"
+    print("⚡ Generating dataset for October 1 to 14, 2026...")
 
-        # Insert Customer
-        cursor.execute("INSERT INTO customers VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)", (cid, cname, comp, phone, email, addr, city, state))
+    # Distribute entries across Oct 1 to Oct 14
+    for day in range(1, 15):
+        ingest_date = datetime.date(2026, 10, day)
+        daily_count = 4 if day in [14, 13, 10, 5] else 3
 
-        pid = random.randint(1, len(DEFAULT_PRODUCTS))
-        prod_name = DEFAULT_PRODUCTS[pid - 1][0]
-        qty = random.randint(1, 8)
-        src = random.choice(SOURCES)
-        sam_id = random.choice(SAM_IDS)
+        for _ in range(daily_count):
+            bid_id = f"BID-Oct-26-{record_counter:03d}"
+            cname = f"Mr {random.choice(FIRST_NAMES)} {random.choice(LAST_NAMES)}"
+            comp = random.choice(COMPANIES)
+            phone = f"91033{random.randint(10005, 99999)}"
+            email = f"{cname.split()[-1].lower()}@{comp.split()[0].lower()}.com"
+            city, state = random.choice(CITIES_STATES)
+            addr = f"{random.randint(10, 500)} Industrial Hub Phase {random.randint(1, 3)}"
 
-        # 60% leads have quotations sent, 40% unassigned
-        is_quoted = i <= 30
-        qstat = "Sent" if is_quoted else "Not Sent"
-        claimed_qs = random.choice(QS_IDS) if is_quoted else "Unassigned"
-        fstat = random.choice(["Under Discussion", "Done", "Under Review"]) if is_quoted else "Under Discussion"
+            cursor.execute("INSERT INTO customers VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)", 
+                           (bid_id, cname, comp, phone, email, addr, city, state))
 
-        ingest_dt = str(base_date + datetime.timedelta(days=(i % 14)))
+            pid = random.randint(1, len(DEFAULT_PRODUCTS))
+            qty = random.randint(1, 6)
+            src = random.choice(SOURCES)
+            sam_id = random.choice(SAM_IDS)
 
-        # Insert Lead
-        cursor.execute("""
-        INSERT INTO leads_master (client_id, product_id, quantity, source, final_status, quotation_status, handled_by_lge_id, assigned_sam_id, ingestion_date, claimed_qs_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (cid, pid, qty, src, fstat, qstat, "EMP-101", sam_id, ingest_dt, claimed_qs))
+            # Assign statuses across categories
+            if record_counter % 5 == 0:
+                final_stat = "Done"
+                q_stat = "Sent"
+                qs_id = random.choice(QS_IDS)
+            elif record_counter % 7 == 0:
+                final_stat = "Cancled"
+                q_stat = "Rejected"
+                qs_id = random.choice(QS_IDS)
+            elif record_counter % 2 == 0:
+                final_stat = "Under Discussion"
+                q_stat = "Sent"
+                qs_id = random.choice(QS_IDS)
+            else:
+                final_stat = "Under Discussion"
+                q_stat = "Not Sent"
+                qs_id = "Unassigned"
 
-        lead_id = cursor.lastrowid
-
-        # Insert Quotation if quoted
-        if is_quoted:
-            q_num = f"SSAPL/2026-27/{840 + i}"
-            amount = round(random.uniform(25000.0, 450000.0), 2)
-            rev_str = random.choice(["No", "Yes - R1", "Yes - R2", "Yes - R3"])
             cursor.execute("""
-            INSERT INTO quotations_master (quotation_id, lead_id, client_id, quotation_number, revised, qut_amount, quotation_status, claimed_qs_id, shared_by_id, company_name_1, approved_date, approved_month)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (f"QUO-{i:04d}", lead_id, cid, q_num, rev_str, amount, "Approved", claimed_qs, claimed_qs, comp, ingest_dt, "October"))
+            INSERT INTO leads_master (client_id, product_id, quantity, source, final_status, quotation_status, handled_by_lge_id, assigned_sam_id, ingestion_date, claimed_qs_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (bid_id, pid, qty, src, final_stat, q_stat, "EMP-101", sam_id, str(ingest_date), qs_id))
 
-        # Log initial follow-up
-        cursor.execute("""
-        INSERT INTO followup_logs (lead_id, employee_id, followup_status, notes)
-        VALUES (?, ?, ?, ?)
-        """, (lead_id, "EMP-101", fstat, f"Initial lead ingested for {cname}"))
+            lead_id = cursor.lastrowid
+
+            # Create quotation record if dispatched
+            if q_stat == "Sent":
+                q_num = f"SSAPL/2026-27/{840 + record_counter}"
+                amount = round(random.uniform(35000.0, 380000.0), 2)
+                rev_str = random.choice(["No", "Yes - R1", "Yes - R2", "Yes - R3", "Yes - R5", "Yes - R7"])
+                cursor.execute("""
+                INSERT INTO quotations_master (quotation_id, lead_id, client_id, quotation_number, revised, qut_amount, quotation_status, claimed_qs_id, shared_by_id, company_name_1, approved_date, approved_month)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (f"QUO-{record_counter:04d}", lead_id, bid_id, q_num, rev_str, amount, "Approved", qs_id, qs_id, comp, str(ingest_date), "October"))
+
+            # Log follow-up call schedule with precise hour slots
+            call_hour = random.choice(SLOT_HOURS)
+            sched_dt = datetime.datetime.combine(ingest_date, datetime.time(call_hour, 0, 0))
+            
+            cursor.execute("""
+            INSERT INTO followup_logs (lead_id, employee_id, followup_sequence_no, followup_status, scheduled_call_time, notes)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """, (lead_id, "EMP-101" if qs_id == "Unassigned" else "Pooja", random.randint(1, 4), final_stat, str(sched_dt), f"Follow-up call logged for {cname}."))
+
+            record_counter += 1
 
     conn.commit()
     conn.close()
-    print("✅ Successfully generated 50 test records in crm_database.db!")
+    print("✅ Seeded database with 60 entries covering Oct 1–14, 2026!")
 
 if __name__ == "__main__":
-    seed_large_database()
+    seed_october_data()

@@ -1,5 +1,5 @@
 """
-views/client_inspector.py - 360-Degree Client Inspector with Filters & BID/SID Tracking.
+views/client_inspector.py - Client 360 Inspector with Advanced Handler Filters & Live Download Preview.
 """
 import datetime
 import pandas as pd
@@ -10,30 +10,42 @@ def render_client_inspector(db_adapter, current_user):
 
     df_leads = db_adapter.fetch_all("leads_master")
     df_quotes = db_adapter.fetch_all("quotations_master")
+    df_emp = db_adapter.fetch_all("employees")
 
     if df_leads.empty:
         st.info("No client records currently available in master database.")
         return
 
-    # Ensure BID ID and SID references are present and explicitly displayed
     if "client_id" in df_leads.columns:
         df_leads["BID_ID"] = df_leads["client_id"]
         df_leads["SID"] = "SID-" + df_leads["lead_id"].astype(str).str.zfill(4)
 
-    st.markdown("##### 🔎 Multi-Attribute Search & Dynamic Filters")
+    st.markdown("##### 🔎 Multi-Attribute Search & Advanced Handled-By Filters")
+
+    # Search query
+    search_query = st.text_input(
+        "🔍 Search Client (by BID/Client ID, SID, Name, or Company):",
+        placeholder="e.g. BID-Oct-26-001, SID-0005, Omprakash, or Blue Cold"
+    ).strip().lower()
+
+    # Filter columns
+    f1, f2, f3, f4 = st.columns(4)
     
-    col_search, col_source, col_status = st.columns([2, 1, 1])
-    with col_search:
-        search_query = st.text_input(
-            "🔍 Search Client (by Client/BID ID, SID, Name, or Company):",
-            placeholder="e.g. BID-Oct-26-001, SID-0005, Omprakash, or Blue Cold"
-        ).strip().lower()
-    with col_source:
-        source_options = ["All Sources"] + list(df_leads["source"].dropna().unique()) if "source" in df_leads.columns else ["All Sources"]
-        selected_source = st.selectbox("Filter by Source:", source_options)
-    with col_status:
-        status_options = ["All Quotation Statuses"] + list(df_leads["quotation_status"].dropna().unique()) if "quotation_status" in df_leads.columns else ["All Quotation Statuses"]
-        selected_status = st.selectbox("Filter by Quotation Status:", status_options)
+    with f1:
+        source_opts = ["All Sources"] + list(df_leads["source"].dropna().unique()) if "source" in df_leads.columns else ["All Sources"]
+        selected_source = st.selectbox("Filter Source:", source_opts)
+    
+    with f2:
+        status_opts = ["All Statuses"] + list(df_leads["quotation_status"].dropna().unique()) if "quotation_status" in df_leads.columns else ["All Statuses"]
+        selected_status = st.selectbox("Filter Quotation Status:", status_opts)
+    
+    with f3:
+        lge_opts = ["All Lead Executives"] + list(df_emp[df_emp["role"] == "LGE"]["full_name"].unique()) if not df_emp.empty else ["All Lead Executives"]
+        selected_lge = st.selectbox("Handled By (LGE):", lge_opts)
+
+    with f4:
+        sam_opts = ["All Salespersons"] + list(df_emp[df_emp["role"] == "SAM"]["full_name"].unique()) if not df_emp.empty else ["All Salespersons"]
+        selected_sam = st.selectbox("Assigned SAM:", sam_opts)
 
     # Date Range Filter
     c_date1, c_date2 = st.columns(2)
@@ -57,10 +69,9 @@ def render_client_inspector(db_adapter, current_user):
     if selected_source != "All Sources" and "source" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["source"] == selected_source]
 
-    if selected_status != "All Quotation Statuses" and "quotation_status" in filtered_df.columns:
+    if selected_status != "All Statuses" and "quotation_status" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["quotation_status"] == selected_status]
 
-    # Apply Date Range Filter
     if "ingestion_date" in filtered_df.columns:
         filtered_df["ingestion_date_dt"] = pd.to_datetime(filtered_df["ingestion_date"], errors="coerce").dt.date
         filtered_df = filtered_df[
@@ -72,7 +83,6 @@ def render_client_inspector(db_adapter, current_user):
     st.markdown("---")
     st.markdown(f"###### 📊 Displaying `{len(filtered_df)}` Matching Client Record(s)")
 
-    # Rearrange columns so BID ID and SID appear right at the front
     front_cols = ["BID_ID", "SID", "client_name", "company_name", "product", "qty", "city", "source", "quotation_status"]
     other_cols = [c for c in filtered_df.columns if c not in front_cols]
     display_cols = [c for c in front_cols if c in filtered_df.columns] + other_cols
@@ -81,24 +91,26 @@ def render_client_inspector(db_adapter, current_user):
     st.dataframe(display_df, width="stretch", hide_index=True)
 
     st.markdown("---")
-    st.markdown("##### 📥 Export Filtered Client Report")
+    st.markdown("##### 📥 Export Filtered Client Report (Live Data Preview)")
     
     exp_col1, exp_col2 = st.columns(2)
     with exp_col1:
         export_columns = st.multiselect(
-            "Select Columns to Include in Download:",
+            "Select Columns to Include in Download Sheet:",
             options=list(display_df.columns),
             default=display_cols[:9]
         )
-    with exp_col2:
-        st.markdown("<br>", unsafe_allow_html=True)
-        export_df = display_df[export_columns] if export_columns else display_df
-        csv_data = export_df.to_csv(index=False).encode("utf-8")
-        
-        st.download_button(
-            label="📥 Download Filtered Client Sheet (CSV)",
-            data=csv_data,
-            file_name=f"client_inspector_report_{start_date}_to_{end_date}.csv",
-            mime="text/csv",
-            width="stretch"
-        )
+
+    export_df = display_df[export_columns] if export_columns else display_df
+
+    st.markdown("###### 👁️ Real-time Export Preview Box (Data to be Downloaded)")
+    st.dataframe(export_df, width="stretch", hide_index=True)
+
+    csv_data = export_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="📥 Download Filtered Client Sheet (CSV)",
+        data=csv_data,
+        file_name=f"client_inspector_report_{start_date}_to_{end_date}.csv",
+        mime="text/csv",
+        width="stretch"
+    )

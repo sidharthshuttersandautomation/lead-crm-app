@@ -1,5 +1,5 @@
 """
-views/quotation_portal.py - Quotation Specialist Workstation.
+views/quotation_portal.py - Quotation Specialist Control Desk.
 """
 import datetime
 import pandas as pd
@@ -12,80 +12,122 @@ def get_current_ist_time():
 
 
 def render_qs_performance_dashboard(db_adapter, current_user):
-    st.markdown("<h2 style='color:#0E2C68; font-weight:800;'>📈 Performance & Progress Control Desk</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='color:#0E2C68; font-weight:800;'>📊 Quotation Control & Inbound Desk</h2>", unsafe_allow_html=True)
     qs_name = current_user.get("name") or "Quotation Specialist"
+    qs_id = current_user.get("employee_id", "EMP-102")
 
     df_leads = db_adapter.fetch_all("leads_master")
     df_quotes = db_adapter.fetch_all("quotations_master")
 
-    st.markdown("##### 📊 Operational KPI Summary")
-    total_quotes = len(df_quotes) if not df_quotes.empty else 0
-    approved_quotes = len(df_quotes[df_quotes["quotation_status"] == "Approved"]) if not df_quotes.empty else 0
-    rejected_quotes = len(df_quotes[df_quotes["quotation_status"] == "Rejected"]) if not df_quotes.empty else 0
-    my_quotes = len(df_quotes[df_quotes["quotation_shared_by"] == qs_name]) if not df_quotes.empty else 0
+    now_ist = get_current_ist_time()
+    today_dt = now_ist.date()
+    yesterday_dt = today_dt - datetime.timedelta(days=1)
+    
+    today_str = str(today_dt)
+    yesterday_str = str(yesterday_dt)
 
+    # Filter to last 2 days of inbound leads
+    recent_leads = pd.DataFrame()
+    if not df_leads.empty and "ingestion_date" in df_leads.columns:
+        recent_leads = df_leads[df_leads["ingestion_date"].astype(str).isin([today_str, yesterday_str])]
+
+    # Calculate Personal vs Team Quotation Counters
+    team_total_today = len(recent_leads)
+    team_dispatched_today = len(recent_leads[recent_leads["quotation_status"] == "Sent"])
+    team_remaining_today = team_total_today - team_dispatched_today
+
+    my_assigned_leads = recent_leads[(recent_leads["claimed_qs_id"] == qs_id) & (recent_leads["quotation_status"] != "Sent")]
+    my_pending_count = len(my_assigned_leads)
+
+    st.markdown("##### 📊 Daily Operational Dashboard")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.markdown(f"<div class='saas-card' style='text-align:center;'><h3 style='color:#184B9C; margin:0;'>{total_quotes}</h3><p style='margin:0; font-weight:700;'>Total System Quotes</p></div>", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class='saas-card' style='text-align:center; border: 2px solid #0284C7;'>
+            <h3 style='color:#0284C7; margin:0;'>{my_pending_count}</h3>
+            <p style='margin:0; font-weight:800; color:#0E2C68;'>{qs_name}'s Assigned Quotes</p>
+        </div>
+        """, unsafe_allow_html=True)
     with c2:
-        st.markdown(f"<div class='saas-card' style='text-align:center;'><h3 style='color:#00A859; margin:0;'>{approved_quotes}</h3><p style='margin:0; font-weight:700;'>Approved Quotes</p></div>", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class='saas-card' style='text-align:center;'>
+            <h3 style='color:#184B9C; margin:0;'>{team_remaining_today} / {team_total_today}</h3>
+            <p style='margin:0; font-weight:700;'>Team Quotes Left Today</p>
+        </div>
+        """, unsafe_allow_html=True)
     with c3:
-        st.markdown(f"<div class='saas-card' style='text-align:center;'><h3 style='color:#E11D48; margin:0;'>{rejected_quotes}</h3><p style='margin:0; font-weight:700;'>Rejected Quotes</p></div>", unsafe_allow_html=True)
+        approved_q = len(df_quotes[df_quotes["quotation_status"] == "Approved"]) if not df_quotes.empty else 0
+        st.markdown(f"""
+        <div class='saas-card' style='text-align:center;'>
+            <h3 style='color:#00A859; margin:0;'>{approved_q}</h3>
+            <p style='margin:0; font-weight:700;'>Approved Quotes</p>
+        </div>
+        """, unsafe_allow_html=True)
     with c4:
-        st.markdown(f"<div class='saas-card' style='text-align:center;'><h3 style='color:#184B9C; margin:0;'>{my_quotes}</h3><p style='margin:0; font-weight:700;'>Quotes Prepared By You</p></div>", unsafe_allow_html=True)
+        rejected_q = len(df_quotes[df_quotes["quotation_status"] == "Rejected"]) if not df_quotes.empty else 0
+        st.markdown(f"""
+        <div class='saas-card' style='text-align:center;'>
+            <h3 style='color:#E11D48; margin:0;'>{rejected_q}</h3>
+            <p style='margin:0; font-weight:700;'>Rejected Quotes</p>
+        </div>
+        """, unsafe_allow_html=True)
 
     st.markdown("---")
-    st.markdown("##### 📋 Today's Assigned Quotation Tasks")
 
-    if not df_leads.empty:
-        unassigned = df_leads[df_leads["claimed_qs_id"] == "Unassigned"]
-        if not unassigned.empty:
-            now_ist = get_current_ist_time()
-            cutoff_today = now_ist.replace(hour=17, minute=30, second=0, microsecond=0)
-
-            for _, row in unassigned.iterrows():
-                cid = row.get("client_id", "N/A")
-                cname = row.get("client_name", "N/A")
-                comp = row.get("company_name", "N/A")
-                prod = row.get("product", "N/A")
-
-                is_after_cutoff = now_ist > cutoff_today
-
-                if not is_after_cutoff:
-                    badge_html = "<span style='background:#E0F2FE; color:#0284C7; padding:5px 14px; border-radius:20px; font-weight:800; font-size:12px;'>📋 TODAY'S TASK: SAME DAY DISPATCH SCHEDULED</span>"
-                else:
-                    badge_html = "<span style='background:#FEF3C7; color:#D97706; padding:5px 14px; border-radius:20px; font-weight:800; font-size:12px;'>📅 OVERNIGHT TASK: NEXT DAY DISPATCH SCHEDULED</span>"
-
-                st.markdown(f"""
-                <div class='saas-card'>
-                    <div style='display:flex; justify-content:space-between; align-items:center;'>
-                        <span style='font-weight:800; color:#0E2C68; font-size:16px;'>👤 {cname} | {comp} ({cid})</span>
-                        {badge_html}
-                    </div>
-                    <div style='margin-top:8px; color:#475569; font-size:13.5px;'>
-                        📦 <b>Product Requested:</b> {prod} (Qty: {row.get('qty', 1)}) &nbsp;|&nbsp; 👔 <b>Assigned SAM:</b> {row.get('assigned_salesperson', 'N/A')}
-                    </div>
+    # 1. Directly Assigned Leads Section
+    st.markdown(f"##### 🎯 Leads Directly Assigned To {qs_name}")
+    if not my_assigned_leads.empty:
+        for idx, row in my_assigned_leads.iterrows():
+            cid = row.get("client_id", "N/A")
+            cname = row.get("client_name", "N/A")
+            comp = row.get("company_name", "N/A")
+            prod = row.get("product", "N/A")
+            
+            st.markdown(f"""
+            <div class='saas-card' style='border-left: 6px solid #00A859;'>
+                <div style='display:flex; justify-content:space-between; align-items:center;'>
+                    <span style='font-weight:800; color:#0E2C68; font-size:16px;'>👤 {cname} | {comp} ({cid})</span>
+                    <span style='background:#E0F2FE; color:#0369A1; padding:4px 14px; border-radius:20px; font-weight:800; font-size:12px;'>DIRECTLY ASSIGNED TO YOU</span>
                 </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.info("🎉 All inbound leads have been processed.")
+                <div style='margin-top:6px; color:#475569; font-size:13.5px;'>
+                    📦 <b>Product:</b> {prod} (Qty: {row.get('qty', 1)}) &nbsp;|&nbsp; 👔 <b>SAM:</b> {row.get('assigned_salesperson', 'N/A')}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.info(f"No direct lead assignments currently pending for {qs_name}.")
 
-    st.markdown("---")
-    st.markdown("##### 📄 Master Data Sheet Exporter")
-    if "show_qs_excel" not in st.session_state:
-        st.session_state["show_qs_excel"] = False
+    # 2. General Inbound Unassigned Leads (Excludes Claimed/Accepted Leads)
+    st.markdown("##### 🔔 Inbound Unassigned Queue (Last 2 Days)")
+    unassigned_queue = recent_leads[(recent_leads["claimed_qs_id"] == "Unassigned") & (recent_leads["quotation_status"] != "Sent")]
 
-    if st.button("📋 Display Custom Excel Export Tool"):
-        st.session_state["show_qs_excel"] = not st.session_state["show_qs_excel"]
+    if not unassigned_queue.empty:
+        cutoff_today = now_ist.replace(hour=17, minute=30, second=0, microsecond=0)
+        for idx, row in unassigned_queue.iterrows():
+            cid = row.get("client_id", "N/A")
+            cname = row.get("client_name", "N/A")
+            comp = row.get("company_name", "N/A")
+            prod = row.get("product", "N/A")
 
-    if st.session_state["show_qs_excel"]:
-        if df_quotes.empty:
-            st.info("No quotation records found.")
-        else:
-            all_cols = list(df_quotes.columns)
-            selected_cols = st.multiselect("Select Columns to Include in Export:", all_cols, default=all_cols)
-            filtered_quotes = df_quotes[selected_cols] if selected_cols else df_quotes
-            st.dataframe(filtered_quotes, width="stretch", hide_index=True)
+            is_after_cutoff = now_ist > cutoff_today
+            if not is_after_cutoff:
+                badge_html = "<span style='background:#E0F2FE; color:#0284C7; padding:5px 14px; border-radius:20px; font-weight:800; font-size:12px;'>📋 TODAY'S TASK: SAME DAY DISPATCH SCHEDULED</span>"
+            else:
+                badge_html = "<span style='background:#FEF3C7; color:#D97706; padding:5px 14px; border-radius:20px; font-weight:800; font-size:12px;'>📅 OVERNIGHT TASK: NEXT DAY DISPATCH SCHEDULED</span>"
+
+            st.markdown(f"""
+            <div class='saas-card'>
+                <div style='display:flex; justify-content:space-between; align-items:center;'>
+                    <span style='font-weight:800; color:#0E2C68; font-size:16px;'>👤 {cname} | {comp} ({cid})</span>
+                    {badge_html}
+                </div>
+                <div style='margin-top:8px; color:#475569; font-size:13.5px;'>
+                    📦 <b>Product:</b> {prod} (Qty: {row.get('qty', 1)}) &nbsp;|&nbsp; 👔 <b>Assigned SAM:</b> {row.get('assigned_salesperson', 'N/A')}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.success("🎉 All inbound leads for the last 2 days have been claimed or dispatched!")
 
 
 def render_qs_generator_and_claim(db_adapter, current_user):
@@ -188,17 +230,21 @@ def _render_quotation_form_body(db_adapter, lead_row, df_quotes, qs_id, qs_name,
     st.markdown("---")
     st.markdown("###### ✍️ Manual & Operational Quotation Inputs")
 
-    revised_options = [
-        "Choose...",
-        "No",
-        "Yes - R1",
-        "Yes - R2",
-        "Yes - R3",
-        "Yes - R4",
-        "Yes - R5",
-        "Yes - R6",
-        "Yes - R7"
-    ]
+    follow_req_key = f"fol_req_select_{lead_row.get('lead_id')}"
+    if follow_req_key not in st.session_state:
+        st.session_state[follow_req_key] = "Choose..."
+
+    revised_options = ["Choose...", "No", "Yes - R1", "Yes - R2", "Yes - R3", "Yes - R4", "Yes - R5", "Yes - R6", "Yes - R7"]
+
+    follow_req = st.selectbox("Follow Up Required *", ["Choose...", "Yes", "No"], key=follow_req_key)
+
+    if follow_req == "Yes":
+        st.markdown("###### ⏰ Schedule Next Follow-up Call Reminder")
+        f_col1, f_col2 = st.columns(2)
+        with f_col1:
+            next_f_date = st.date_input("Next Follow-up Date *", value=now_dt.date() + datetime.timedelta(days=3), key=f"date_pick_{lead_row.get('lead_id')}")
+        with f_col2:
+            next_f_time = st.time_input("Next Follow-up Time *", value=datetime.time(12, 0), key=f"time_pick_{lead_row.get('lead_id')}")
 
     with st.form(f"quotation_entry_form_{lead_row.get('lead_id')}"):
         m1, m2, m3 = st.columns(3)
@@ -208,7 +254,6 @@ def _render_quotation_form_body(db_adapter, lead_row, df_quotes, qs_id, qs_name,
             revised = st.selectbox("Revised *", revised_options, index=0)
             q_status = st.selectbox("Quotation Status *", ["Choose...", "Approved", "Under Review", "Rejected"], index=0)
         with m2:
-            follow_req = st.selectbox("Follow Up Required *", ["Choose...", "Yes", "No"], index=0)
             app_by = st.selectbox("Qut. Status Approved By *", ["Choose...", "Jitendra Sir", "Jeevan Sharma", "Sidharth Jain", "Deepak Sethiya"], index=0)
             follow_status = st.selectbox("Follow Up Status *", ["Choose...", "Under Discussion", "Won", "Lost", "CallBack"], index=0)
             drive_link = st.text_input("Link (Folder Link)", value="https://drive.google.com")
@@ -217,14 +262,6 @@ def _render_quotation_form_body(db_adapter, lead_row, df_quotes, qs_id, qs_name,
             approved_date = st.date_input("Approved Date", value=now_dt.date())
             comp_name_1 = st.text_input("Company Name-1", value=str(lead_row.get("company_name", "")))
             approved_month = st.text_input("Approved Month *", value=current_month_str)
-
-        if follow_req == "Yes":
-            st.markdown("###### ⏰ Schedule Next Follow-up Call Reminder")
-            f_col1, f_col2 = st.columns(2)
-            with f_col1:
-                next_f_date = st.date_input("Next Follow-up Date *", value=now_dt.date() + datetime.timedelta(days=3))
-            with f_col2:
-                next_f_time = st.time_input("Next Follow-up Time *", value=datetime.time(12, 0))
 
         submit_q_btn = st.form_submit_button("💾 Save & Dispatch Quotation")
 
