@@ -101,6 +101,10 @@ function render() {{
   const soundOn = localStorage.getItem("{SOUND_KEY}") !== "off";
   snd.textContent = soundOn ? "🔊" : "🔇";
   snd.title = soundOn ? "Reminder sound on (click to turn off)" : "Reminder sound off (click to turn on)";
+  const iOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const homeScreen = window.navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches;
+  if (iOS && !homeScreen) {{ b.textContent = "🔊 Test reminder sound";
+    s.textContent = "iPhone/iPad: for pop-up alerts, open the CRM from the Home Screen (Share → Add to Home Screen)."; return; }}
   if (!("Notification" in window)) {{ b.textContent = "🔊 Test reminder sound"; s.textContent = "This browser can't show desktop alerts; sound still works."; return; }}
   const p = Notification.permission;
   if (p === "granted") {{ b.textContent = "🔔 Alerts on · test"; s.textContent = "Reminders pop up with a sound, even outside the browser."; }}
@@ -126,4 +130,4 @@ snd.onclick = function () {{
   render(); if (!on) chime();
 }};
 render();
-</script>""", 100)
+</script>""", 118)

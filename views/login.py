@@ -11,11 +11,12 @@ from config.settings import LOGO_PATH
 from database.factory import secrets_status
 from utils.auth import login_user
 
-APP_VERSION = "3.1"
+APP_VERSION = "3.4"
 
 LOGIN_CSS = """
 <style>
 [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"], header[data-testid="stHeader"] { display: none !important; }
+:root, html, body { color-scheme: light only; }
 .stApp { background:
     radial-gradient(1200px 500px at 10% -10%, rgba(24,75,156,0.10), transparent 60%),
     radial-gradient(900px 400px at 110% 110%, rgba(0,168,89,0.08), transparent 60%), #F4F7FC !important; }
@@ -57,7 +58,7 @@ LOGIN_CSS = """
 .st-key-login_card [data-testid="stFormSubmitButton"], .st-key-login_card [data-testid="stFormSubmitButton"] > div { width: 100% !important; }
 .st-key-login_card [data-testid="stFormSubmitButton"] button { width: 100% !important; min-height: 48px; font-size: 15.5px !important;
   margin-top: 6px; }
-.login-eyebrow { font-size: 12px; font-weight: 800; letter-spacing: 0.12em; color: #00A859; text-transform: uppercase; }
+.login-eyebrow { font-size: 12px; font-weight: 800; letter-spacing: 0.12em; color:#047857; text-transform: uppercase; }
 .login-title { font-size: 26px; font-weight: 800; color: #0E2C68; margin: 6px 0 4px; letter-spacing: -0.02em; }
 .login-sub { font-size: 14px; color: #64748B; margin-bottom: 22px; }
 .login-help { border-top: 1px solid #E2E8F0; margin-top: 18px; padding-top: 14px; font-size: 13px; color: #64748B;

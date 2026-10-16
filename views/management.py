@@ -459,7 +459,19 @@ def render_master_export(db_adapter, current_user):
     df_logs = db_adapter.fetch_all("followup_logs")
     df_orders = db_adapter.fetch_all("orders")
 
-    tab_exp, tab_activity, tab_backup = st.tabs(["360° export", "Login & change activity", "Backup"])
+    tab_exp, tab_activity, tab_backup, tab_clear = st.tabs(["360° export", "Login & change activity", "Backup",
+                                                            "🧹 Clear all data"])
+    with tab_clear:
+        st.warning("This deletes every client, lead, quotation, call, order, payment, PO check, snooze and target. "
+                   "Users, products and the audit trail are kept. Download a backup first.")
+        counts = {t: db_adapter.count_rows(t) for t in ("leads_master", "quotations_master", "followup_logs", "orders", "payments")}
+        st.caption(" · ".join(f"{k.replace('_master', '').replace('_', ' ')}: {v}" for k, v in counts.items()))
+        word = st.text_input("Type CLEAR to confirm", key="clear_word")
+        if st.button("Delete all lead data", key="clear_go", disabled=word.strip().upper() != "CLEAR"):
+            done = db_adapter.clear_lead_data()
+            st.success("Cleared: " + ", ".join(f"{v} {k}" for k, v in done.items()))
+            st.caption("To stop demo data coming back after a restart, set seed_demo_data = \"false\" in Secrets.")
+
 
     with tab_exp:
         if df_leads.empty:

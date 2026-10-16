@@ -26,6 +26,7 @@ PRIMARY_KEYS = {
     "call_snoozes": "snooze_id",
     "targets": "target_id",
     "payment_followups": "followup_id",
+    "po_revisions": "rev_id",
 }
 SENSITIVE_COLUMNS = {"password_hash"}
 
@@ -116,7 +117,8 @@ READ_QUERIES = {
                o.po_verified_by, o.expected_delivery_date, o.dispatched_at, o.installed_at,
                o.po_owner_id, po.full_name AS po_owner_name, c.email,
                COALESCE(o.plan_advance, 50) AS plan_advance, COALESCE(o.plan_dispatch, 40) AS plan_dispatch,
-               COALESCE(o.plan_install, 10) AS plan_install, o.po_claimed_at,
+               COALESCE(o.plan_install, 10) AS plan_install, o.po_claimed_at, o.po_status,
+               (SELECT COUNT(*) FROM po_revisions r WHERE r.order_id = o.order_id AND r.result = 'Sent for revision') AS po_revisions,
                o.created_by, o.created_at, o.updated_at
         FROM orders o
         JOIN leads_master lm ON o.lead_id = lm.lead_id
@@ -148,6 +150,12 @@ READ_QUERIES = {
         JOIN customers c ON lm.client_id = c.client_id
         LEFT JOIN employees e ON cs.employee_id = e.employee_id
         ORDER BY cs.snoozed_at
+    """,
+    "po_revisions": """
+        SELECT r.*, e.full_name AS checked_by_name, o.client_id
+        FROM po_revisions r JOIN orders o ON r.order_id = o.order_id
+        LEFT JOIN employees e ON r.checked_by = e.employee_id
+        ORDER BY r.order_id, r.round_no
     """,
     "employees": """
         SELECT employee_id, full_name, email, role, is_active, COALESCE(is_team_lead, 0) AS is_team_lead,
@@ -378,7 +386,7 @@ class SQLiteAdapter(BaseDatabaseAdapter):
     def clear_lead_data(self) -> dict:
         counts = {}
         with self._conn() as conn:
-            for table in ("payment_followups", "call_snoozes", "payments", "orders", "followup_logs", "quotations_master",
+            for table in ("targets", "po_revisions", "payment_followups", "call_snoozes", "payments", "orders", "followup_logs", "quotations_master",
                           "leads_master", "customers"):
                 counts[table] = conn.execute(f'DELETE FROM "{table}"').rowcount
         self.log_event("CLEAR_LEAD_DATA", None, None, counts, None)
@@ -404,6 +412,23 @@ class SQLiteAdapter(BaseDatabaseAdapter):
             else:
                 self.last_error = "Another specialist claimed this ticket first."
             return claimed
+        except Exception as exc:
+            self.last_error = f"Claim failed: {exc}"
+            return False
+
+    def claim_followup(self, lead_id: int, emp_id: str) -> bool:
+        """Take an unclaimed follow-up. False if someone else took it first."""
+        self.last_error = ""
+        try:
+            with self._conn() as conn:
+                cur = conn.execute("UPDATE leads_master SET followup_owner_id = ?, updated_at = ? "
+                                   "WHERE lead_id = ? AND followup_owner_id IS NULL", (emp_id, now_str(), int(lead_id)))
+                ok = cur.rowcount == 1
+            if ok:
+                self.log_event("CLAIM_FOLLOWUP", "leads_master", lead_id, {"followup_owner_id": None}, {"followup_owner_id": emp_id})
+            else:
+                self.last_error = "Someone else took this follow-up first."
+            return ok
         except Exception as exc:
             self.last_error = f"Claim failed: {exc}"
             return False

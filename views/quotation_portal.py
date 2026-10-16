@@ -22,7 +22,7 @@ def _sla_badge(row, today):
     if due and due < str(today):
         return "<span style='background:#FEE2E2; color:#B91C1C; padding:5px 14px; border-radius:20px; font-weight:800; font-size:12px;'>SLA missed · was due " + html.escape(due) + "</span>"
     if due == str(today):
-        return "<span style='background:#E0F2FE; color:#0284C7; padding:5px 14px; border-radius:20px; font-weight:800; font-size:12px;'>Due today</span>"
+        return "<span style='background:#E0F2FE; color:#0369A1; padding:5px 14px; border-radius:20px; font-weight:800; font-size:12px;'>Due today</span>"
     return "<span style='background:#FEF3C7; color:#B45309; padding:5px 14px; border-radius:20px; font-weight:800; font-size:12px;'>Overnight · due " + html.escape(due) + "</span>"
 
 
@@ -300,7 +300,7 @@ def _render_quotation_form_body(db_adapter, lead_row, df_quotes, current_user):
     if r0_net and next_rev > 1:
         compare += f" · vs R0: {(net - r0_net) / r0_net * 100:+.1f}%"
     st.markdown(f"<div class='saas-card' style='padding:12px 18px;'><b>{inr(gross)}</b> list − <b>{inr(disc_amt)}</b> "
-                f"discount ({pct:.2f}%) = <span style='color:#00A859; font-weight:800; font-size:18px;'>{inr(net)}</span> "
+                f"discount ({pct:.2f}%) = <span style='color:#047857; font-weight:800; font-size:18px;'>{inr(net)}</span> "
                 f"final price<span style='color:#64748B;'>{compare}</span></div>", unsafe_allow_html=True)
     me_label = next((k for k, v in sharer_map.items() if v == current_user["employee_id"]), None)
     sharer_keys = list(sharer_map.keys())
@@ -391,6 +391,10 @@ def _render_quotation_form_body(db_adapter, lead_row, df_quotes, current_user):
             st.rerun()
 
 
+def _has(v) -> bool:
+    return v is not None and str(v) not in ("", "nan", "None")
+
+
 def _apply_quote_to_lead(db_adapter, lead_row, q_status, follow_req, sched_ts, current_user, stamp) -> bool:
     """Moves the lead forward after a quotation is saved or approved."""
     owner = lead_row.get("claimed_qs_id") or current_user["employee_id"]
@@ -398,7 +402,7 @@ def _apply_quote_to_lead(db_adapter, lead_row, q_status, follow_req, sched_ts, c
     if q_status == "Approved":
         updates.update({
             "quotation_status": "Sent",
-            "followup_owner_id": owner,
+            "followup_owner_id": lead_row.get("followup_owner_id") if _has(lead_row.get("followup_owner_id")) else owner,
             "next_followup_at": sched_ts if follow_req == "Yes" else None,
         })
         if not lead_row.get("quote_sent_at"):
@@ -443,15 +447,38 @@ def _render_approval_update(db_adapter, lead_row, latest, approver_map, current_
 
 
 # ---------------------------------------------------------------- 4. follow-up workday
+FU_VIEWS = ["📞 Claimed follow-ups", "🙋 Unclaimed follow-ups"]
+
+
+def unclaimed_followups(df_leads, user):
+    """Open leads that nobody has taken for follow-up yet (salespeople: only their own clients)."""
+    active = open_leads(df_leads)
+    if active.empty:
+        return active
+    un = active[active["followup_owner_id"].isna()]
+    if user["role"] == "SAM":
+        un = un[un["assigned_sam_id"] == user["employee_id"]]
+    return un
+
+
 def render_qs_followup_workday(db_adapter, current_user):
-    page_title("Follow-up calls", "Log every call; the next call date keeps the list honest.")
+    page_title("Follow-up calls", "Claimed follow-ups have an owner; unclaimed ones are waiting for someone to take them.")
     df_leads = db_adapter.fetch_all("leads_master")
     df_quotes = db_adapter.fetch_all("quotations_master")
     df_logs = db_adapter.fetch_all("followup_logs")
+    un = unclaimed_followups(df_leads, current_user)
+    labels = {FU_VIEWS[0]: FU_VIEWS[0], FU_VIEWS[1]: f"{FU_VIEWS[1]} ({len(un)})"}
+    view = st.segmented_control("Follow-ups", FU_VIEWS, key="fu_view", format_func=lambda x: labels[x],
+                                default=None if "fu_view" in st.session_state else FU_VIEWS[0],
+                                label_visibility="collapsed") or FU_VIEWS[0]
+    if view == FU_VIEWS[1]:
+        _unclaimed_followups(db_adapter, un, current_user)
+        return
 
     show_owner, owner = False, None
     if current_user["role"] == "ADMIN":
         df_emp = db_adapter.fetch_all("employees")
+        df_emp = df_emp[df_emp["is_active"] == 1]
         owners = dict(zip(df_emp["full_name"] + " (" + df_emp["employee_id"] + ")", df_emp["employee_id"]))
         pick = st.selectbox("Whose calls", ["Everyone"] + list(owners.keys()))
         owner = owners.get(pick)
@@ -460,6 +487,34 @@ def render_qs_followup_workday(db_adapter, current_user):
         st.caption("Calls for your own clients only.")
         show_owner = True
     queue = call_queue(df_leads, current_user, owner)
+    queue = queue[queue["followup_owner_id"].notna()] if not queue.empty else queue
 
     render_time_slot_workday_queue(db_adapter, queue, latest_quotes(df_quotes), df_logs,
                                    current_user, now_ist().replace(tzinfo=None), show_owner)
+
+
+def _unclaimed_followups(db, un, user):
+    from components.cards import CSS as CARD_CSS, card_html, esc
+    st.markdown(CARD_CSS, unsafe_allow_html=True)
+    if un.empty:
+        st.success("Every open lead has someone following up. 🎉")
+        return
+    st.caption("Whoever claims a follow-up first owns it: it moves to their Claimed follow-ups and their reminders."
+               + (" As admin, assign them from 👥 Leads & clients → 🔀 Reassign & escalate (Move: Follow-up calls)."
+                  if user["role"] == "ADMIN" else ""))
+    for _, r in un.sort_values("ingested_at", ascending=False).head(40).iterrows():
+        st.markdown(card_html(
+            r["client_id"], r["client_name"], r.get("company_name"),
+            pills=[(f"Stage: {r['final_status']}", "blue"), ("Unclaimed", "amber")],
+            fields=[("Product", f"{esc(r['product'])} × {r['qty']}"), ("Salesperson", esc(r.get("assigned_salesperson"))),
+                    ("Quotation", esc(r.get("quotation_status"))), ("Received", esc(fmt_12h(r.get("ingested_at")))),
+                    ("Added by", esc(r.get("leads_handled_by")))],
+            links=contact_links(r.get("phone_number"), r.get("email"), str(r["client_name"])), accent="amber"),
+            unsafe_allow_html=True)
+        if user["role"] != "ADMIN" and st.button(f"🙋 Claim follow-up for {r['client_id']}", key=f"fu_claim_{r['lead_id']}",
+                                                 type="primary"):
+            if db.claim_followup(int(r["lead_id"]), user["employee_id"]):
+                st.toast(f"{r['client_id']} is yours to follow up. Set the first call from Claimed follow-ups.", icon="🙋")
+            else:
+                st.toast(db.last_error, icon="⚠️")
+            st.rerun()

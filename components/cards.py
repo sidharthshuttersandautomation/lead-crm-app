@@ -27,16 +27,16 @@ CSS_RAW = """
 .ic-pill { display:inline-block; padding:3px 11px; border-radius:20px; font-size:12px; font-weight:800; margin:4px 0 0 4px; }
 .ic-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px 18px;
   margin-top:14px; padding-top:12px; border-top:1px dashed #E2E8F0; }
-.ic-f .l { font-size:11.5px; text-transform:uppercase; letter-spacing:.06em; color:#94A3B8; font-weight:700; }
+.ic-f .l { font-size:11.5px; text-transform:uppercase; letter-spacing:.06em; color:#64748B; font-weight:700; }
 .ic-f .v { font-size:14px; color:#1E293B; font-weight:600; margin-top:2px; }
-.ic-note { margin-top:12px; background:#F1F5F9; border-radius:10px; padding:9px 12px; font-size:13px; color:#475569; }
+.ic-note { margin-top:12px; background:#F1F5F9; border-radius:10px; padding:9px 12px; font-size:13px; color:#334155; }
 .ic-note.warn { background:#FFF1F2; color:#9F1239; }
 </style>
 """
 
 PILL = {
     "red": ("#FDE7EA", "#BE123C"), "amber": ("#FEF3C7", "#B45309"), "green": ("#E3F6EC", "#047857"),
-    "blue": ("#E0F2FE", "#0369A1"), "navy": ("#E2E8F4", "#0E2C68"), "grey": ("#F1F5F9", "#475569"),
+    "blue": ("#E0F2FE", "#075985"), "navy": ("#E2E8F4", "#0E2C68"), "grey": ("#F1F5F9", "#475569"),
 }
 ACCENT = {"red": "#BE123C", "amber": "#B45309", "green": "#00A859", "blue": "#184B9C", "navy": "#0E2C68"}
 

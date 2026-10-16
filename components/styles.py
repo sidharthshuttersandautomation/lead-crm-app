@@ -14,7 +14,34 @@ CSS = """
   --muted: #64748B; --line: rgba(24, 75, 156, 0.16); --surface: #FFFFFF; --page: #F4F7FC;
 }
 
-html, body, .stApp { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif !important; }
+/* Light design on every device: Safari/iOS must not apply dark mode to the page or its form controls */
+:root, html, body { color-scheme: light only; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+html, body, .stApp { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, 'Segoe UI', sans-serif !important;
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+.stApp { color: #0E2C68; }
+/* Streamlit fades the labels of read-only fields; keep them readable */
+[data-testid="stWidgetLabel"] { opacity: 1 !important; }
+[data-testid="stWidgetLabel"] p, [data-testid="stWidgetLabel"] label { color: #1E293B !important; }
+/* Safari draws inputs, selects and dates with its own colours unless told otherwise */
+input, textarea, select, button { -webkit-appearance: none; appearance: none; color-scheme: light; }
+input, textarea { color: #0E2C68 !important; -webkit-text-fill-color: #0E2C68; caret-color: #184B9C; }
+input::placeholder, textarea::placeholder { color: #64748B !important; -webkit-text-fill-color: #64748B; opacity: 1; }
+input[type="date"], input[type="time"] { min-height: 1.6em; }
+input[type="checkbox"], input[type="radio"] { -webkit-appearance: auto; appearance: auto; }
+::-webkit-datetime-edit, ::-webkit-datetime-edit-fields-wrapper { color: #0E2C68; }
+a { -webkit-tap-highlight-color: rgba(24,75,156,0.15); }
+/* the ☰ button that opens the menu when it is closed (phones) — make it obvious */
+[data-testid="stExpandSidebarButton"] { background: #184B9C !important; border-radius: 10px !important; padding: 6px 8px !important;
+  box-shadow: 0 4px 12px rgba(14,44,104,0.25); }
+[data-testid="stExpandSidebarButton"] svg, [data-testid="stExpandSidebarButton"] span { color: #FFFFFF !important; fill: #FFFFFF !important; }
+/* iPhone / iPad: 16px inputs stop Safari zooming in when a field is tapped; keep clear of the home bar */
+@media (max-width: 820px) {
+  input, textarea, select, [data-baseweb="select"] * { font-size: 16px !important; }
+  .block-container { padding-left: 0.9rem !important; padding-right: 0.9rem !important;
+    padding-bottom: calc(3rem + env(safe-area-inset-bottom)) !important; }
+  .kpi .kpi-value { font-size: 22px !important; }
+}
 .stApp { background: var(--page) !important; color: var(--ink); }
 .block-container { padding-top: 1.6rem !important; padding-bottom: 3rem !important; max-width: 1400px; }
 h1, h2, h3, h4, h5, h6 { color: var(--navy) !important; letter-spacing: -0.01em; }
@@ -58,7 +85,7 @@ h1, h2, h3, h4, h5, h6 { color: var(--navy) !important; letter-spacing: -0.01em;
 
 /* ---------- buttons ---------- */
 div.stButton > button, div[data-testid="stFormSubmitButton"] button, div.stDownloadButton > button {
-  background: linear-gradient(135deg, #00A859 0%, #008F4C 100%) !important; color: #FFFFFF !important;
+  background: linear-gradient(135deg, #00874A 0%, #006E3B 100%) !important; color: #FFFFFF !important;
   border: none !important; border-radius: 10px !important; font-weight: 700 !important;
   padding: 0.55rem 1.2rem !important; box-shadow: 0 4px 14px rgba(0,168,89,0.28) !important;
   transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease !important;

@@ -124,7 +124,7 @@ def render_follow_up_card(db_adapter, row, df_logs: pd.DataFrame, df_latest_quot
     pills += [(f"📞 {call_text}", "red" if bucket == "overdue" else ("grey" if ts is None else "amber")),
               (f"Follow-up #{len(logs) + 1}", "blue")]
     last_note = (f"<b>Last note:</b> {html.escape(str(logs.iloc[-1]['notes']))} "
-                 f"<span style='color:#94A3B8;'>· {html.escape(str(logs.iloc[-1].get('employee_name') or ''))}, "
+                 f"<span style='color:#475569;'>· {html.escape(str(logs.iloc[-1].get('employee_name') or ''))}, "
                  f"{fmt_12h(logs.iloc[-1]['logged_at'])}</span>") if not logs.empty else "No calls logged yet."
     fields = [("Stage", html.escape(str(row["final_status"]))),
               ("Product", f"{html.escape(str(row['product']))} × {row['qty']}"),

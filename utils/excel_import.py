@@ -95,7 +95,7 @@ def _title(v):
 
 
 def _read(xls, name, id_col="Client ID"):
-    df = pd.read_excel(xls, name)
+    df = xls[name].copy() if isinstance(xls, dict) else pd.read_excel(xls, name)
     df.columns = [" ".join(str(c).split()) for c in df.columns]
     if id_col not in df.columns:
         raise ValueError(f"Sheet '{name}' has no '{id_col}' column.")
@@ -151,15 +151,23 @@ class PeopleMatcher:
 # ------------------------------------------------------------------ main
 def convert_workbook(file, db) -> dict:
     """Converts the workbook into CRM rows without writing anything. Returns a plan."""
-    xls = pd.ExcelFile(file)
-    missing = [s for s in (SHEETS["leads"],) if s not in xls.sheet_names]
+    name = str(getattr(file, "name", file)).lower()
+    if name.endswith(".csv"):
+        # A CSV export of just the "Leads Data" sheet
+        xls = {SHEETS["leads"]: pd.read_csv(file, dtype={"Number": str})}
+        sheet_names = [SHEETS["leads"]]
+    else:
+        xls = pd.ExcelFile(file)
+        sheet_names = xls.sheet_names
+    missing = [s for s in (SHEETS["leads"],) if s not in sheet_names]
     if missing:
-        raise ValueError(f"The file has no '{missing[0]}' sheet. Sheets found: {', '.join(xls.sheet_names)}")
+        raise ValueError(f"The file has no '{missing[0]}' sheet. Sheets found: {', '.join(sheet_names)}")
 
     leads = _read(xls, SHEETS["leads"])
-    quotes = _read(xls, SHEETS["quotes"]) if SHEETS["quotes"] in xls.sheet_names else pd.DataFrame()
-    fups = _read(xls, SHEETS["followups"]) if SHEETS["followups"] in xls.sheet_names else pd.DataFrame()
-    orders = _read(xls, SHEETS["orders"]) if SHEETS["orders"] in xls.sheet_names else pd.DataFrame()
+    quotes = _read(xls, SHEETS["quotes"]) if SHEETS["quotes"] in sheet_names else pd.DataFrame()
+    fups = _read(xls, SHEETS["followups"]) if SHEETS["followups"] in sheet_names else pd.DataFrame()
+    orders = _read(xls, SHEETS["orders"]) if SHEETS["orders"] in sheet_names else pd.DataFrame()
+    only_leads = quotes.empty and fups.empty and orders.empty
 
     notes, warnings = [], []
     stamp = now_str()
@@ -263,7 +271,7 @@ def convert_workbook(file, db) -> dict:
         fu_date = _ts(f.get("Follow Up Date")) if f is not None else None
         closed = stage in ("Done", "Cancled")
         next_call = None if closed or fu_date is None else fu_date.replace(hour=11, minute=0, second=0)
-        owner = followup_by or qs or lge
+        owner = followup_by or qs or (None if only_leads else lge)
 
         lead_rows.append({
             "_cid": cid, "_pkey": pkey,
@@ -350,15 +358,22 @@ def convert_workbook(file, db) -> dict:
     if missing_amount:
         warnings.append(f"{len(missing_amount)} quotation(s) had no amount and were imported at ₹0: "
                         + ", ".join(missing_amount) + ". Add a revision with the real price.")
-    notes.append("Leads Data 'Final Status = Done' means 'handled' in the old sheet, so the CRM stage comes from the "
+    notes.append("Leads Data 'Final Status = Done' means 'handled' in the old sheet, so it is not treated as a won deal. "
+                 + ("Without the follow-up tracker, quoted leads start as In Discussion and the rest as Pending. " if only_leads else "")
+                 + "With the tracker, the stage comes from the "
                  "follow-up tracker (Under Discussion → In Discussion, Call Back → CallBack, Call Not Received → "
                  "Not Responed, Cancel → Cancled, Under Finalisation → Under Finalization, Done → Done).")
     if lost_by_remark:
         notes.append(f"{lost_by_remark} lead(s) without a quotation were marked Cancled because the remark says so "
                      "(e.g. 'we dont provide…' → Technical Mismatch, 'want from local' → Location Issue).")
-    notes.append("Each ticked 'Follow UP n' box became one call log. The old sheet has no call dates, so calls are "
-                 "spread evenly between the quotation date and the follow-up date; the last call carries the notes.")
-    notes.append("Quotation amounts are imported as the final price with no discount (old sheet has no list price).")
+    if only_leads:
+        notes.append("Only the Leads Data sheet was supplied, so no quotation amounts, call logs or orders were created. "
+                     "Leads whose quotation was 'Sent' keep that status and their follow-up goes to the specialist who sent it; "
+                     "the rest are in 🙋 Unclaimed follow-ups for anyone to take.")
+    if not only_leads:
+        notes.append("Each ticked 'Follow UP n' box became one call log. The old sheet has no call dates, so calls are "
+                     "spread evenly between the quotation date and the follow-up date; the last call carries the notes.")
+        notes.append("Quotation amounts are imported as the final price with no discount (old sheet has no list price).")
 
     return {
         "customers": customers_rows, "leads": lead_rows, "quotes": quote_rows, "logs": log_rows,

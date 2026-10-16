@@ -10,10 +10,138 @@ from utils.metrics import delta_kpi
 from utils.time_utils import now_ist, TIMESTAMP_FMT
 
 UNASSIGNED = "Unassigned — any specialist can claim it"
+NO_FOLLOWER = "Unclaimed — anyone can take it"
+FOLLOWUP_ROLES = ["QS", "SAM", "LGE"]
+
+
+def followup_options(df_emp):
+    """'Follow-up by' choices: nobody yet (unclaimed) or any active person who makes client calls."""
+    people = df_emp[df_emp["role"].isin(FOLLOWUP_ROLES) & (df_emp["is_active"] == 1)] if not df_emp.empty else df_emp
+    people = people.assign(_o=people["role"].map({"QS": 0, "SAM": 1, "LGE": 2})).sort_values(["_o", "full_name"])
+    out = {NO_FOLLOWER: None}
+    out.update(dict(zip(people["full_name"] + " (" + people["role"].map({"QS": "Quotation", "SAM": "Sales",
+                                                                          "LGE": "Lead exec"}) + ")", people["employee_id"])))
+    return out
+
+
+LEAD_SECTIONS = ["📥 Add new lead", "👤 Assign salesperson / follow-up"]
 
 
 def render_lead_portal(db_adapter, current_user):
-    page_title("Add new lead", "Saved leads go straight to the quotation desk, or to the specialist you assign.")
+    page_title("Leads", "Add new leads and make sure every lead has a salesperson.")
+    leads = db_adapter.fetch_all("leads_master")
+    pool = _assignable(leads, current_user)
+    unassigned = int(pool["assigned_sam_id"].isna().sum()) if not pool.empty else 0
+    if "assign_goto" in st.session_state:          # "Assign salesperson" button from Alerts
+        st.session_state["lead_section"] = LEAD_SECTIONS[1]
+        st.session_state["assign_pick"] = st.session_state.pop("assign_goto")
+        st.session_state.pop("assign_sel", None)
+        st.session_state["assign_only"] = False
+    labels = {LEAD_SECTIONS[0]: LEAD_SECTIONS[0],
+              LEAD_SECTIONS[1]: LEAD_SECTIONS[1] + (f" · {unassigned} without one" if unassigned else "")}
+    section = st.segmented_control("Section", LEAD_SECTIONS, key="lead_section", format_func=lambda x: labels[x],
+                                   default=None if "lead_section" in st.session_state else LEAD_SECTIONS[0],
+                                   label_visibility="collapsed") or LEAD_SECTIONS[0]
+    if section == LEAD_SECTIONS[0]:
+        _add_lead(db_adapter, current_user)
+    else:
+        _assign_salesperson(db_adapter, current_user, pool)
+
+
+def _assignable(leads, user):
+    """Open leads this person may assign: admins all; others the leads they added (salespeople: also their own)."""
+    from utils.metrics import open_leads
+    active = open_leads(leads)
+    if active.empty or user["role"] == "ADMIN":
+        return active
+    me = user["employee_id"]
+    return active[(active["handled_by_lge_id"] == me) | (active["assigned_sam_id"] == me)]
+
+
+def salesperson_options(df_emp):
+    by_name = {name_key(n): i for n, i in zip(df_emp["full_name"], df_emp["employee_id"])} if not df_emp.empty else {}
+    out = {}
+    for name in SALESPERSON_LIST:
+        if name == "N/A":
+            out["N/A"] = None
+        elif name_key(name) in by_name:
+            out[name] = by_name[name_key(name)]
+    sams = df_emp[(df_emp["role"] == "SAM") & (df_emp["is_active"] == 1)] if not df_emp.empty else df_emp
+    for n, i in zip(sams["full_name"], sams["employee_id"]):     # any salesperson login not in the list
+        if i not in out.values():
+            out[n] = i
+    return out
+
+
+def _assign_salesperson(db, user, pool):
+    from components.cards import CSS as CARD_CSS, card_html, esc
+    from components.time_picker import fmt_12h
+    from utils.governance import reassign_leads
+    if pool.empty:
+        st.info("No open leads to assign.")
+        return
+    st.markdown(CARD_CSS, unsafe_allow_html=True)
+    who = "all open leads" if user["role"] == "ADMIN" else "open leads you added"
+    st.caption(f"Showing {who}. Every change is saved in the audit trail with your reason.")
+    if "assign_only" not in st.session_state:
+        st.session_state["assign_only"] = bool(pool["assigned_sam_id"].isna().any())
+    only_missing = st.toggle("Only leads without a salesperson", key="assign_only")
+    view = pool[pool["assigned_sam_id"].isna()] if only_missing else pool
+    if view.empty:
+        st.success("Every lead here has a salesperson. 🎉")
+        return
+    view = view.sort_values("ingested_at", ascending=False)
+    labels = {f"{r['client_id']} · {r['client_name']} · now: {r.get('assigned_salesperson') or 'N/A — nobody'}": r["lead_id"]
+              for _, r in view.iterrows()}
+    ids = list(labels.values())
+    want = st.session_state.get("assign_pick")
+    pick = st.selectbox("Lead", list(labels.keys()), index=ids.index(want) if want in ids else 0, key="assign_sel")
+    row = view[view["lead_id"] == labels[pick]].iloc[0]
+    st.markdown(card_html(row["client_id"], row["client_name"], row.get("company_name"),
+                          pills=[("No salesperson" if not row.get("assigned_salesperson") or str(row.get("assigned_salesperson")) == "nan"
+                                  else f"Salesperson: {row['assigned_salesperson']}", "red" if row["assigned_sam_id"] is None
+                                  or str(row["assigned_sam_id"]) == "nan" else "blue")],
+                          fields=[("Product", f"{esc(row['product'])} × {row['qty']}"), ("City", esc(row.get("city"))),
+                                  ("Source", esc(row.get("source"))), ("Received", esc(fmt_12h(row.get("ingested_at")))),
+                                  ("Added by", esc(row.get("leads_handled_by"))), ("Stage", esc(row["final_status"]))]),
+                unsafe_allow_html=True)
+    df_emp = db.fetch_all("employees")
+    opts = salesperson_options(df_emp)
+    fu = followup_options(df_emp)
+    fu_keys = list(fu.keys())
+    cur_fu = next((i for i, v in enumerate(fu.values()) if v == row.get("followup_owner_id")), 0)
+    sam_keys = list(opts.keys())
+    cur_sam = next((i for i, v in enumerate(opts.values()) if v == row.get("assigned_sam_id")), 0)
+    with st.form(f"assign_{row['lead_id']}", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            new = st.selectbox("Assign to *", sam_keys, index=cur_sam)
+        with c2:
+            new_fu = st.selectbox("Follow-up by", fu_keys, index=cur_fu)
+        reason = st.text_input("Reason *", placeholder="e.g. Client is in Jeevan sir's area")
+        if st.form_submit_button("Save salesperson", type="primary"):
+            if not reason.strip():
+                st.error("Give a reason — it is saved in the audit trail.")
+            else:
+                one = view[view["lead_id"] == row["lead_id"]]
+                errors, changed = [], []
+                if opts[new] != row.get("assigned_sam_id") and opts[new] is not None:
+                    errors += reassign_leads(db, one, "SAM", opts[new], reason.strip())[1]
+                    changed.append(f"salesperson → {new}")
+                if fu[new_fu] is not None and fu[new_fu] != row.get("followup_owner_id"):
+                    errors += reassign_leads(db, one, "FOLLOWUP", fu[new_fu], reason.strip())[1]
+                    changed.append(f"follow-up by → {new_fu.split(' (')[0]}")
+                if errors:
+                    st.error(errors[0])
+                elif not changed:
+                    st.info("Nothing changed — pick a different salesperson or follow-up person.")
+                else:
+                    st.session_state.pop("assign_pick", None)
+                    st.toast(f"{row['client_id']}: " + ", ".join(changed) + ".", icon="✅")
+                    st.rerun()
+
+
+def _add_lead(db_adapter, current_user):
 
     df_products = db_adapter.fetch_all("products")
     df_emp = db_adapter.fetch_all("employees")
@@ -23,13 +151,10 @@ def render_lead_portal(db_adapter, current_user):
         st.error("No products are set up. Ask an admin to add products first.")
         return
     products = df_products[df_products["is_active"] == 1]
-    by_name = {name_key(n): i for n, i in zip(df_emp["full_name"], df_emp["employee_id"])} if not df_emp.empty else {}
-    sam_labels = {}
-    for name in SALESPERSON_LIST:
-        if name == "N/A":
-            sam_labels["N/A"] = None
-        elif name_key(name) in by_name:
-            sam_labels[name] = by_name[name_key(name)]
+    sam_labels = salesperson_options(df_emp)
+    sam_keys = list(sam_labels.keys())
+    # a salesperson adding their own client is the salesperson by default
+    default_sam = next((i for i, v in enumerate(sam_labels.values()) if v == current_user["employee_id"]), 0)
     qs_staff = df_emp[(df_emp["role"] == "QS") & (df_emp["is_active"] == 1)]
     qs_labels = {UNASSIGNED: None}
     qs_labels.update(dict(zip(qs_staff["full_name"] + " (" + qs_staff["employee_id"] + ")", qs_staff["employee_id"])))
@@ -73,16 +198,25 @@ def render_lead_portal(db_adapter, current_user):
         with c5:
             source = st.selectbox("Source *", SOURCE_OPTIONS)
         with c6:
-            sam_label = st.selectbox("Assigned salesperson *", list(sam_labels.keys()))
+            sam_label = st.selectbox("Assigned salesperson *", sam_keys, index=default_sam,
+                                     help="Choose N/A if you don't know yet — it can be assigned later under 👤 Assign salesperson.")
 
         responded = st.radio("Customer responded", CUSTOMER_RESPONDED, horizontal=True)
-        c7, c8, c9 = st.columns([1.6, 1, 1])
+        fu_labels = followup_options(df_emp)
+        fu_keys = list(fu_labels.keys())
+        default_fu = next((i for i, v in enumerate(fu_labels.values()) if v == current_user["employee_id"]), 0)
+        c7, c8 = st.columns(2)
         with c7:
             qs_choice = st.selectbox("Assign quotation to", qs_keys, index=default_qs,
                                      help="The lead appears straight away under 'My tickets' on that specialist's dashboard.")
         with c8:
-            priority = st.selectbox("Priority", PRIORITIES)
+            fu_choice = st.selectbox("Follow-up by *", fu_keys, index=default_fu,
+                                     help="Who calls the client. 'Unclaimed' puts it in the Unclaimed follow-ups list "
+                                          "where anyone can take it.")
+        c9, c10 = st.columns(2)
         with c9:
+            priority = st.selectbox("Priority", PRIORITIES)
+        with c10:
             st.write("")
             key_account = st.checkbox("Key enterprise account")
         remarks = st.text_area("Requirement details", placeholder="Size, site conditions, timeline...")
@@ -138,7 +272,7 @@ def render_lead_portal(db_adapter, current_user):
                 "assigned_sam_id": sam_labels[sam_label],
                 "claimed_qs_id": assigned_qs,
                 "claimed_at": stamp if assigned_qs else None,
-                "followup_owner_id": assigned_qs or current_user["employee_id"],
+                "followup_owner_id": fu_labels[fu_choice],
                 "ingestion_date": stamp[:10],
                 "ingested_at": stamp,
                 "is_after_cutoff": int(after_cutoff),

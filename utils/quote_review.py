@@ -12,7 +12,9 @@ def approve_quotation(db, quote, lead, user, next_call: str = None, note: str = 
     })
     if not ok:
         return False
-    owner = lead.get("claimed_qs_id") or lead.get("followup_owner_id") or user["employee_id"]
+    current = lead.get("followup_owner_id")
+    owner = current if current is not None and str(current) not in ("", "nan", "None") else \
+        (lead.get("claimed_qs_id") or user["employee_id"])
     updates = {"quotation_status": "Sent", "followup_owner_id": owner, "updated_at": stamp}
     if next_call:
         updates["next_followup_at"] = next_call

@@ -11,10 +11,10 @@ from utils.excel_import import apply_plan, convert_workbook
 def render_data_import(db_adapter, current_user):
     page_title("Import from Excel", "Load your existing Leads workbook (Leads Data, Quotation Sheet, "
                                     "Quotation Follow Up Tracker, Process Order) into the CRM.")
-    up = st.file_uploader("Workbook (.xlsx)", type=["xlsx"])
+    up = st.file_uploader("Workbook (.xlsx) or the Leads Data sheet as .csv", type=["xlsx", "csv"])
     if up is None:
-        st.info("Export the Google Sheet as Microsoft Excel (.xlsx) and upload it here. "
-                "Nothing is saved until you press Import.")
+        st.info("Upload the full Google Sheet as Excel (.xlsx), or just the Leads Data tab as CSV "
+                "(File → Download → Comma-separated values). Nothing is saved until you press Import.")
         return
 
     data = up.getvalue()

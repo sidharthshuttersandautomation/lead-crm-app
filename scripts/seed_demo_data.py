@@ -16,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import utils.compat  # noqa: F401,E402
 from config.settings import CANCEL_CATEGORY_OPTIONS, IST, SOURCE_OPTIONS  # noqa: E402
 from utils.security import hash_password  # noqa: E402
 from utils.sla_calculator import evaluate_sla  # noqa: E402
@@ -119,7 +120,7 @@ def seed_demo_data(db, demo_password=None, days=45, total=50):
             else:
                 stage = "sent"
 
-            sam = rnd.choice(sam_ids)
+            sam = rnd.choice(sam_ids) if rnd.random() > 0.08 else None   # a few leads still need a salesperson
             qs = None if stage == "unclaimed" else rnd.choice(qs_ids)
             claimed_at = (received + datetime.timedelta(minutes=rnd.randint(20, 240))) if qs else None
             if claimed_at and claimed_at > today:

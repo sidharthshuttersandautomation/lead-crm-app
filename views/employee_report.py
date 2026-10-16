@@ -64,7 +64,7 @@ def render_employee_report(db_adapter, current_user):
                 f"border-radius:16px; margin:6px 0 16px; display:flex; justify-content:space-between; align-items:center; "
                 f"flex-wrap:wrap; gap:8px;'><div><div style='font-size:22px; font-weight:800;'>{html.escape(e['full_name'])}</div>"
                 f"<div style='color:#D6E2F7; font-size:13.5px; margin-top:3px;'>{html.escape(e['employee_id'])} · "
-                f"{html.escape(e['email'])}</div></div><div style='background:#00A859; padding:7px 18px; border-radius:22px; "
+                f"{html.escape(e['email'])}</div></div><div style='background:#00874A; padding:7px 18px; border-radius:22px; "
                 f"font-weight:800; font-size:13px;'>{html.escape(ROLE_DESCRIPTIONS.get(role, role))}</div></div>",
                 unsafe_allow_html=True)
 

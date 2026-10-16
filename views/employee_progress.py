@@ -61,7 +61,7 @@ def _journey(base, title):
     rows = "".join(f"""
       <div style='margin:10px 0;'>
         <div style='display:flex; justify-content:space-between; font-size:13.5px; color:#334155; font-weight:600;'>
-          <span>{html.escape(label)}</span><span>{v} <span style='color:#94A3B8;'>· {v / n * 100:.0f}%</span></span></div>
+          <span>{html.escape(label)}</span><span>{v} <span style='color:#64748B;'>· {v / n * 100:.0f}%</span></span></div>
         <div style='background:#EEF3FB; border-radius:8px; height:12px; margin-top:4px; overflow:hidden;'>
           <div style='width:{max(v / n * 100, 1.5):.1f}%; background:{c}; height:100%; border-radius:8px;'></div></div>
       </div>""" for label, v, c in steps)
@@ -158,7 +158,7 @@ def render_my_progress_report(db_adapter, current_user):
     # ---------------- filters
     with st.expander("🔎 Filters", expanded=False):
         f1, f2, f3 = st.columns(3)
-        prods = sorted(set(lead_scope["product"].dropna()) | set(quote_scope["product"].dropna())) if not lead_scope.empty or not quote_scope.empty else []
+        prods = sorted({p for d in (lead_scope, quote_scope) if not d.empty and "product" in d for p in d["product"].dropna()})
         with f1:
             p_sel = st.multiselect("Product", prods, placeholder="All products", key="mp_prod")
         with f2:
@@ -378,14 +378,20 @@ def _po_progress(db, emp_id, start, days):
 
     coll = {"label": "Collected", "value": inr(pays["amount"].sum()) if len(pays) else "₹0", "icon": "💵", "tone": "green",
             "sub": f"{len(pays)} payments"}
+    from utils.payment_plan import po_days
+    vd = [po_days(o) for _, o in verified_all.iterrows()] if not verified_all.empty else []
+    vd = [d for d in vd if d is not None]
+    revs = int(mine["po_revisions"].fillna(0).sum()) if not mine.empty and "po_revisions" in mine else 0
     render_kpi_cards([
         coll,
+        {"label": "Average time to verify a PO", "value": f"{sum(vd) / len(vd):.1f} days" if vd else "—", "icon": "⏱️",
+         "tone": "navy", "sub": f"{revs} PO revisions requested"},
         delta_kpi("POs verified", verified_all, "po_verified_at", days, icon="🧾", tone="blue"),
         delta_kpi("Payment calls logged", calls_all, "logged_at", days, icon="📞", tone="amber"),
         {"label": "Due now", "value": inr(due_now), "icon": "⏳", "tone": "red",
          "sub": f"{int(sdf['Overdue'].sum()) if not sdf.empty else 0} orders overdue"},
         {"label": "Orders handled", "value": len(mine), "icon": "📦", "tone": "navy",
-         "sub": f"{int((sdf['Stage'] == 'Fully paid').sum()) if not sdf.empty else 0} fully paid"},
+         "sub": f"{int((sdf['Stage'] == 'Completed').sum()) if not sdf.empty else 0} completed"},
     ])
 
     c1, c2 = st.columns(2)

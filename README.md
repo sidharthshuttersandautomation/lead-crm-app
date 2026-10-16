@@ -94,6 +94,23 @@ Extra access (set per person in **Users**):
 
 Targets: admins set monthly targets in 📈 Employee report card; gauges show progress there and in each person's My progress.
 
+## Follow-ups and POs (v3.3)
+
+- **Follow-up by** on every new lead decides who calls the client. "Unclaimed" puts the lead in
+  📞 Follow-up calls → 🙋 Unclaimed follow-ups, where the first person to claim it owns it.
+- PO desk: 📥 claim a PO → 🗂️ Order profile → 🧾 PO revision (tick every point; send back for revision or verify).
+  Every check round is kept; the order shows how many revisions and how long verification took.
+  The progress bar only moves when money is received. Completed orders drop out of the Order profile list.
+- Admin: 💼 Sales & money → 📈 PO progress. ⚙️ Admin tools → 📦 Master export & backup → 🧹 Clear all data.
+
+## Mac, iPhone and iPad
+
+- Colours are fixed to the light brand theme, so macOS/iOS dark mode does not change them.
+- On phones the menu starts closed: tap the blue » button (top-left) to open it.
+- iPhone/iPad pop-up alerts: Safari only allows them for web apps opened from the Home Screen
+  (Share → Add to Home Screen, then open the CRM from that icon and tap "Turn on desktop alerts").
+  Reminders inside the app work everywhere.
+
 ## Security checklist
 
 - [ ] The old Google service-account key in the previous `secrets.toml` was shared:

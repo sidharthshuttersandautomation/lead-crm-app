@@ -30,10 +30,15 @@ def enrich_orders(df_orders: pd.DataFrame) -> pd.DataFrame:
     df["status"] = [payment_status(v, r) for v, r in zip(df["order_value"], df["received"])]
     df["days_outstanding"] = df["created_at"].map(lambda v: (today - parse_ts(v).date()).days if parse_ts(v) else 0)
     df["ageing"] = df["days_outstanding"].map(ageing_label)
-    nxt = df["next_collection_date"].astype(str).str[:10]
+    def _day(v):
+        if v is None or (isinstance(v, float) and v != v):
+            return ""
+        t = str(v)[:10]
+        return "" if t in ("None", "nan", "NaT") else t
+    nxt = [_day(v) for v in df["next_collection_date"]]
     df["follow_up"] = [
-        "—" if s == "Received" else ("Overdue" if n not in ("None", "nan", "") and n < str(today)
-                                      else "Today" if n == str(today) else "Scheduled" if n not in ("None", "nan", "") else "Not set")
+        "—" if s == "Received" else ("Overdue" if n and n < str(today)
+                                      else "Today" if n == str(today) else "Scheduled" if n else "Not set")
         for s, n in zip(df["status"], nxt)
     ]
     return df

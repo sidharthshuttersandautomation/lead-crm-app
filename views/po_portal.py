@@ -18,12 +18,13 @@ from components.time_picker import fmt_12h, time_12h
 from config.settings import (DEFAULT_DELIVERY_DAYS, DELAY_REASONS, PAYMENT_MODES, PAYMENT_OUTCOMES, PAYMENT_TERM_PRESETS,
                              PO_CHECKS, STAGE_WON)
 from utils.metrics import inr, latest_quotes
-from utils.payment_plan import (checks, current_milestone, milestones, payment_alerts, plan_label, plan_of, stage_label,
-                                tracker_html)
+from config.settings import PO_STAGES
+from utils.payment_plan import (checks, current_milestone, milestones, paid_percent, payment_alerts, plan_label, plan_of,
+                                po_days, stage_label, tracker_html)
 from utils.payments import payment_status
 from utils.time_utils import now_ist, now_str, today_ist
 
-SECTIONS = ["📅 Today", "📥 Claim new POs", "📦 My orders", "👥 Team"]
+SECTIONS = ["📅 Today", "📥 Claim new POs", "📦 My orders", "🗂️ Order profile", "📈 PO progress"]
 
 
 def _num(v, default=0.0) -> float:
@@ -86,15 +87,16 @@ def render_po_portal(db_adapter, current_user):
     ])
 
     if "po_goto" in st.session_state:          # requested by a button on the previous run
-        st.session_state["po_section"] = SECTIONS[2]
+        st.session_state["po_section"] = SECTIONS[3]
         st.session_state["po_open"] = st.session_state.pop("po_goto")
         st.session_state.pop("po_pick", None)
     leads = db_adapter.fetch_all("leads_master")
     done = leads[leads["final_status"] == STAGE_WON] if not leads.empty else leads
     unclaimed = done[~done["lead_id"].isin(orders["lead_id"])] if not orders.empty and not done.empty else done
     labels = {SECTIONS[0]: SECTIONS[0], SECTIONS[1]: f"{SECTIONS[1]} ({len(unclaimed)})",
-              SECTIONS[2]: "📦 All orders" if current_user["role"] == "ADMIN" else SECTIONS[2], SECTIONS[3]: SECTIONS[3]}
-    shown = SECTIONS if current_user["role"] == "ADMIN" else SECTIONS[:3]
+              SECTIONS[2]: "📦 All orders" if current_user["role"] == "ADMIN" else SECTIONS[2],
+              SECTIONS[3]: SECTIONS[3], SECTIONS[4]: SECTIONS[4]}
+    shown = SECTIONS if current_user["role"] == "ADMIN" else SECTIONS[:4]
     section = st.segmented_control("Section", shown, key="po_section", format_func=lambda x: labels[x],
                                    default=None if "po_section" in st.session_state else SECTIONS[0],
                                    label_visibility="collapsed") or SECTIONS[0]
@@ -104,11 +106,12 @@ def render_po_portal(db_adapter, current_user):
         _claim(db_adapter, unclaimed, current_user)
     elif section == SECTIONS[2]:
         _orders(db_adapter, orders, current_user)
+    elif section == SECTIONS[3]:
+        _profile_section(db_adapter, orders, current_user)
     else:
-        _team(db_adapter, orders)
+        _po_progress_admin(db_adapter, orders)
 
 
-# ------------------------------------------------------------------ today
 def _open_button(order_id, key):
     if st.button("Open order ➜", key=key, type="primary"):
         st.session_state["po_goto"] = order_id
@@ -144,24 +147,29 @@ def _today(db, orders, alerts):
 
 
 # ------------------------------------------------------------------ orders list + profile
+def _my_pool(orders, user, key):
+    """PO members see their own orders (plus old unowned ones); a toggle shows the team's, view-only."""
+    if user["role"] == "ADMIN" or orders.empty:
+        return orders
+    if st.toggle("Show the whole team's orders (view only)", value=False, key=key):
+        return orders
+    return orders[(orders["po_owner_id"] == user["employee_id"]) | orders["po_owner_id"].isna()]
+
+
 def _orders(db, orders, user):
     if orders.empty:
-        st.info("No orders yet. Create one from a Done deal in 🆕 New order from PO.")
+        st.info("No orders yet. Claim a Done deal in 📥 Claim new POs.")
         return
-    orders = orders.copy()
-    if user["role"] != "ADMIN":
-        team_view = st.toggle("Show the whole team's orders (view only)", value=False, key="po_teamview")
-        if not team_view:
-            orders = orders[(orders["po_owner_id"] == user["employee_id"]) | orders["po_owner_id"].isna()]
-        if orders.empty:
-            st.info("You haven't claimed any POs yet. Claim one from 📥 Claim new POs.")
-            return
+    orders = _my_pool(orders.copy(), user, "po_teamview")
+    if orders.empty:
+        st.info("You haven't claimed any POs yet. Claim one from 📥 Claim new POs.")
+        return
     orders["stage"] = [stage_label(o) for _, o in orders.iterrows()]
     f1, f2, f3 = st.columns([1.5, 1, 1])
     with f1:
         q = st.text_input("Search orders", placeholder="Client ID, name, company, order or PO number", key="po_q").strip().lower()
     with f2:
-        stages = st.multiselect("Stage", sorted(orders["stage"].unique()), placeholder="All stages", key="po_st")
+        stages = st.multiselect("Stage", PO_STAGES, placeholder="All stages", key="po_st")
     with f3:
         sp = st.multiselect("Salesperson", sorted(orders["sales_person"].dropna().unique()), placeholder="All", key="po_sp")
     view = orders
@@ -171,42 +179,65 @@ def _orders(db, orders, user):
         view = view[hay.str.contains(q, regex=False)]
     if stages:
         view = view[view["stage"].isin(stages)]
-    if sp:
-        view = view[view["sales_person"].isin(sp)]
-
-    rows = "".join(flat(f"""
-      <div class='ic-card' style='--accent:{"#00A859" if o["stage"] == "Fully paid" else "#184B9C"}; padding:12px 18px;'>
-        <div class='ic-head'><div><span class='ic-id'>{esc(o['client_id'])}</span><span class='ic-name'>{esc(o['client_name'])}</span>
-        <div class='ic-co'>{esc(o['order_id'])} · {esc(o.get('company_name'), '')} · sales: {esc(o.get('sales_person'))} ·
-        PO: {esc(o.get('po_owner_name'), 'unclaimed')} · terms {plan_label(o)}</div></div>
-        <div class='ic-right'><div class='ic-big'>{inr(o['received'])} <span style='font-size:13px; color:#64748B;'>of {inr(o['order_value'])}</span></div>
-        <span class='ic-pill' style='background:#E8EFFB; color:#184B9C;'>{html.escape(o['stage'])}</span></div></div>
-        <div style='margin-top:10px;'>{tracker_html(o, compact=True)}</div></div>""") for _, o in view.head(40).iterrows())
-    st.markdown(rows or "<div class='saas-card'>No orders match.</div>", unsafe_allow_html=True)
-
-    st.markdown("##### Order profile")
-    labels = {f"{o['client_id']} · {o['client_name']} · {o['order_id']}": o["order_id"] for _, o in view.iterrows()}
-    if not labels:
+    else:
+        view = view[view["stage"] != "Completed"]
+        done = int((orders["stage"] == "Completed").sum())
+        if done:
+            st.caption(f"{done} completed order(s) hidden — pick 'Completed' in Stage to see them.")
+    if view.empty:
+        st.info("No orders match.")
         return
-    ids = list(labels.values())
+    order_rank = {s_: i for i, s_ in enumerate(PO_STAGES)}
+    view = view.assign(_r=view["stage"].map(order_rank)).sort_values(["_r", "created_at"])
+    for _, o in view.head(40).iterrows():
+        revs = int(o.get("po_revisions") or 0)
+        st.markdown(flat(f"""
+          <div class='ic-card' style='--accent:{"#00874A" if o["stage"] == "Completed" else "#184B9C"}; padding:12px 18px;'>
+            <div class='ic-head'><div><span class='ic-id'>{esc(o['client_id'])}</span><span class='ic-name'>{esc(o['client_name'])}</span>
+            <div class='ic-co'>{esc(o['order_id'])} · {esc(o.get('company_name'), '')} · sales: {esc(o.get('sales_person'))} ·
+            PO: {esc(o.get('po_owner_name'), 'unclaimed')} · terms {plan_label(o)}{f" · PO revised {revs}×" if revs else ""}</div></div>
+            <div class='ic-right'><div class='ic-big'>{inr(o['received'])} <span style='font-size:13px; color:#475569;'>of {inr(o['order_value'])}</span></div>
+            <span class='ic-pill' style='background:#E8EFFB; color:#184B9C;'>{html.escape(o['stage'])}</span></div></div>
+            <div style='margin-top:10px;'>{tracker_html(o, compact=True)}</div></div>"""), unsafe_allow_html=True)
+        _open_button(o["order_id"], f"po_list_open_{o['order_id']}")
+
+
+def _profile_section(db, orders, user):
+    if orders.empty:
+        st.info("No orders yet.")
+        return
+    pool = _my_pool(orders.copy(), user, "po_teamview_profile")
+    pool = pool.assign(stage=[stage_label(o) for _, o in pool.iterrows()])
     want = st.session_state.get("po_open")
+    show_done = st.toggle("Include completed orders", value=False, key="po_show_done")
+    if not show_done:
+        pool = pool[(pool["stage"] != "Completed") | (pool["order_id"] == want)]
+    if pool.empty:
+        st.info("No open orders. Turn on 'Include completed orders' to see finished ones.")
+        return
+    labels = {f"{o['client_id']} · {o['client_name']} · {o['order_id']} · {o['stage']}": o["order_id"] for _, o in pool.iterrows()}
+    ids = list(labels.values())
     pick = st.selectbox("Order", list(labels.keys()), index=ids.index(want) if want in ids else 0, key="po_pick")
-    order = orders[orders["order_id"] == labels[pick]].iloc[0]
-    _profile(db, order, user)
+    st.session_state["po_open"] = labels[pick]
+    _profile(db, orders[orders["order_id"] == labels[pick]].iloc[0], user)
 
 
 def _profile(db, o, user):
     oid = o["order_id"]
-    readonly = user["role"] != "ADMIN" and o.get("po_owner_id") not in (None, user["employee_id"]) \
-        and str(o.get("po_owner_id")) != "nan"
+    readonly = user["role"] != "ADMIN" and str(o.get("po_owner_id")) not in ("None", "nan", user["employee_id"])
+    stage = stage_label(o)
+    revs = int(o.get("po_revisions") or 0)
+    days = po_days(o)
     st.markdown(card_html(
         o["client_id"], o["client_name"], o.get("company_name"), big=inr(o["order_value"]),
-        pills=[(stage_label(o), "blue"), (payment_status(o["order_value"], o["received"]), "green")],
+        pills=[(stage, "blue"), (f"{paid_percent(o):g}% paid", "green" if paid_percent(o) >= 100 else "amber")],
         fields=[("Order", esc(oid)), ("Salesperson", esc(o.get("sales_person"))), ("Product", f"{esc(o['product'])} × {o['qty']}"),
                 ("PO number", esc(o.get("purchase_order_no"))), ("PO date", esc(o.get("po_date"))),
-                ("PI number", esc(o.get("pi_number"))), ("Delivery period", f"{int(o['delivery_days'])} days" if pd.notna(o.get("delivery_days")) else "—"),
+                ("PI number", esc(o.get("pi_number"))),
+                ("Delivery period", f"{int(_num(o.get('delivery_days')))} days" if _num(o.get("delivery_days")) else "—"),
                 ("Expected delivery", esc(o.get("expected_delivery_date"))), ("PO handled by", esc(o.get("po_owner_name"))),
                 ("Payment terms", plan_label(o) + " (advance / dispatch / installation)"),
+                ("PO revisions", f"{revs}"), ("PO verified in", f"{days:g} days" if days is not None else "not verified yet"),
                 ("Next payment call", esc(fmt_12h(o.get("next_collection_date"))))],
         links=contact_links(o.get("phone_number"), o.get("email"), str(o["client_name"])),
         note=f"<b>Last remark:</b> {esc(o.get('collection_remarks'))}" if clean(o.get("collection_remarks"), "") else None),
@@ -215,41 +246,40 @@ def _profile(db, o, user):
 
     ms = [m for m in milestones(o) if m["percent"] > 0]
     st.dataframe(pd.DataFrame({
-        "Stage": [m["name"] for m in ms], "Share": [f"{m['percent']}%" for m in ms],
+        "Stage": [m["name"] for m in ms], "Share": [f"{m['percent']:g}%" for m in ms],
         "Amount": [inr(m["amount"]) for m in ms], "Received": [inr(m["received"]) for m in ms],
         "Balance": [inr(m["balance"]) for m in ms],
         "Due": [f"{m['due'].strftime('%d %b %Y') if m['due'] else '—'} ({m['due_note']})" for m in ms],
         "Status": [m["status"] for m in ms]}), width="stretch", hide_index=True)
 
-    actions = []
-    if not o.get("po_verified_at"):
-        actions.append("✅ Verify PO")
-    actions += ["📞 Log payment call", "💵 Record payment"]
-    if o.get("po_verified_at") and not o.get("dispatched_at"):
-        actions.append("🚚 Mark dispatched")
-    if o.get("dispatched_at") and not o.get("installed_at"):
-        actions.append("🛠️ Mark installed")
-    actions.append("✏️ Payment terms")
-    actions.append("🕘 History")
     if readonly:
         st.info(f"This order is handled by {o.get('po_owner_name')}. You can view it, but only they can update it.")
+        _po_rounds_table(db, oid)
         _history(db, o)
         return
+    actions = ["🧾 PO revision", "📞 Log payment call", "💵 Record payment"]
+    verified = clean(o.get("po_verified_at"), "") != ""
+    if verified and clean(o.get("dispatched_at"), "") == "":
+        actions.append("🚚 Material dispatch")
+    if clean(o.get("dispatched_at"), "") != "" and clean(o.get("installed_at"), "") == "":
+        actions.append("🛠️ Installation")
+    actions += ["✏️ Payment terms", "🕘 History"]
     tabs = st.tabs(actions)
     for name, tab in zip(actions, tabs):
         with tab:
-            if name.startswith("✅"):
-                _verify_form(db, o, user)
+            if name.startswith("🧾"):
+                _po_revision_tab(db, o, user)
             elif name.startswith("📞"):
                 _payment_call_form(db, o, user)
             elif name.startswith("💵"):
                 _payment_form(db, o, user)
             elif name.startswith("🚚"):
+                st.caption("Mark the material as dispatched. A call for the before-dispatch payment is scheduled automatically.")
                 d = st.date_input("Dispatched on", value=today_ist(), key=f"dsp_{oid}", format="DD/MM/YYYY")
-                if st.button("Confirm dispatch", key=f"dspb_{oid}", type="primary"):
+                if st.button("Confirm material dispatch", key=f"dspb_{oid}", type="primary"):
                     if mark_dispatched(db, o, f"{d} 10:00:00"):
                         db.update_row("orders", "order_id", oid, {"next_collection_date": f"{d} 11:00:00"})
-                        st.toast("Marked dispatched. A call for the 40% payment is scheduled.", icon="🚚")
+                        st.toast("Material dispatched. Next payment call scheduled.", icon="🚚")
                         st.rerun()
             elif name.startswith("🛠️"):
                 d = st.date_input("Installed on", value=today_ist(), key=f"ins_{oid}", format="DD/MM/YYYY")
@@ -257,7 +287,7 @@ def _profile(db, o, user):
                     if mark_installed(db, o, f"{d} 10:00:00"):
                         nxt = d + datetime.timedelta(days=1)
                         db.update_row("orders", "order_id", oid, {"next_collection_date": f"{nxt} 11:00:00"})
-                        st.toast("Marked installed. A call for the final 10% is scheduled.", icon="🛠️")
+                        st.toast("Installed. A call for the final payment is scheduled.", icon="🛠️")
                         st.rerun()
             elif name.startswith("✏️"):
                 _terms_form(db, o)
@@ -300,56 +330,136 @@ def _terms_form(db, o):
             st.error(db.last_error)
 
 
-def _verify_form(db, o, user):
+def _po_rounds_table(db, oid):
+    r = db.fetch_all("po_revisions")
+    r = r[r["order_id"] == oid] if not r.empty else r
+    if r.empty:
+        st.caption("No PO checks recorded yet.")
+        return r
+    rows = []
+    for _, x in r.sort_values("round_no").iterrows():
+        try:
+            mism = ", ".join(json.loads(x["mismatches"] or "[]")) or "—"
+        except Exception:
+            mism = "—"
+        rows.append({"Round": int(x["round_no"]), "Result": x["result"], "What was wrong": mism,
+                     "Notes": clean(x.get("notes")), "PO number": clean(x.get("po_number")),
+                     "PO amount": inr(x["po_amount"]) if _num(x.get("po_amount")) else "—",
+                     "Delivery": f"{int(_num(x.get('delivery_days')))} days" if _num(x.get("delivery_days")) else "—",
+                     "Terms": clean(x.get("terms")), "Checked by": clean(x.get("checked_by_name")),
+                     "When": fmt_12h(x["checked_at"])})
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+    return r
+
+
+def _po_revision_tab(db, o, user):
     oid = o["order_id"]
-    done = checks(o)
-    st.markdown("**Payment terms**")
+    rounds = db.fetch_all("po_revisions")
+    rounds = rounds[rounds["order_id"] == oid] if not rounds.empty else rounds
+    revs = int((rounds["result"] == "Sent for revision").sum()) if not rounds.empty else 0
+    verified = clean(o.get("po_verified_at"), "") != ""
+    days = po_days(o)
+    render_kpi_cards([
+        {"label": "PO status", "value": "Verified" if verified else ("Revision requested" if o.get("po_status") == "Revision requested"
+                                                                      else "To check"), "tone": "green" if verified else "amber", "icon": "🧾"},
+        {"label": "Times sent for revision", "value": revs, "tone": "red" if revs else "blue", "icon": "↩️"},
+        {"label": "Time to verify", "value": f"{days:g} days" if days is not None else "—", "tone": "navy", "icon": "⏱️",
+         "sub": "from claim to verified"},
+    ], columns=3)
+    st.markdown("###### PO check history")
+    _po_rounds_table(db, oid)
+
+    if verified:
+        st.success(f"PO verified on {fmt_12h(o.get('po_verified_at'))}.")
+        with st.expander("Client sent a revised PO after verification? Check it again"):
+            note = st.text_input("What changed in the revised PO? *", key=f"repo_note_{oid}")
+            if st.button("Re-open the PO check", key=f"repo_{oid}"):
+                if not note.strip():
+                    st.error("Say what changed.")
+                else:
+                    db.insert_row("po_revisions", {"order_id": oid, "round_no": len(rounds) + 1, "result": "Revised PO received",
+                                                   "notes": note.strip(), "checked_by": user["employee_id"], "checked_at": now_str()})
+                    db.update_row("orders", "order_id", oid, {"po_verified_at": None, "po_status": "Received", "updated_at": now_str()})
+                    st.toast("PO check re-opened. Check the revised PO.", icon="🧾")
+                    st.rerun()
+        return
+
+    st.markdown(f"###### Check round {len(rounds) + 1}")
+    st.markdown("**Payment terms on the PO**")
     terms = _terms_inputs(f"vterms_{oid}", plan_of(o))
+    done = checks(o)
     with st.form(f"verify_{oid}"):
-        st.markdown("**Check the client's Process Order against the quotation**")
-        ticks = {c: st.checkbox(c, value=bool(done.get(c)), key=f"chk_{oid}_{i}") for i, c in enumerate(PO_CHECKS)}
         c1, c2, c3 = st.columns(3)
         with c1:
             po_no = st.text_input("PO number *", value=clean(o.get("purchase_order_no"), ""))
-            value = st.number_input("Final order value incl. GST (₹) *", min_value=0.0, value=_num(o["order_value"]), step=1000.0)
-            po_amt = st.number_input("Amount written on the PO (₹)", min_value=0.0,
-                                     value=_num(o.get("po_amount"), _num(o["order_value"])), step=1000.0)
-        with c2:
-            pi_no = st.text_input("Proforma Invoice (PI) number", value=clean(o.get("pi_number"), ""))
-            days = st.number_input("Delivery period (days) *", min_value=1, max_value=365,
-                                   value=int(_num(o.get("delivery_days"), DEFAULT_DELIVERY_DAYS)))
-        with c3:
             po_date = st.date_input("PO date", value=today_ist(), format="DD/MM/YYYY")
-            note = st.text_input("Mismatch / remarks")
-        if st.form_submit_button("Save check", type="primary"):
+        with c2:
+            po_amt = st.number_input("Amount mentioned on the PO (₹) *", min_value=0.0,
+                                     value=_num(o.get("po_amount"), _num(o["order_value"])), step=1000.0)
+            value = st.number_input("Final order value incl. GST (₹) *", min_value=0.0, value=_num(o["order_value"]), step=1000.0)
+        with c3:
+            pi_no = st.text_input("Proforma Invoice (PI) number", value=clean(o.get("pi_number"), ""))
+            days_in = st.number_input("Delivery period (days) *", min_value=1, max_value=365,
+                                      value=int(_num(o.get("delivery_days"), DEFAULT_DELIVERY_DAYS)))
+        st.markdown("**Tick every point that is correct on the PO**")
+        tc = st.columns(2)
+        ticks = {}
+        for i, c in enumerate(PO_CHECKS):
+            with tc[i % 2]:
+                ticks[c] = st.checkbox(c, value=bool(done.get(c)), key=f"chk_{oid}_{i}")
+        note = st.text_area("What needs to be revised / remarks", placeholder="e.g. PO shows ₹2,90,000 but quotation is ₹2,94,300; "
+                                                                             "delivery written as 15 days instead of 20")
+        b1, b2 = st.columns(2)
+        with b1:
+            ok_btn = st.form_submit_button("✅ All correct — mark PO verified", type="primary")
+        with b2:
+            rev_btn = st.form_submit_button("↩️ Send to client for PO revision")
+        if ok_btn or rev_btn:
             if terms is None:
                 st.error("The payment terms must add up to 100%.")
                 return
-            all_ok = all(ticks.values())
+            if not po_no.strip():
+                st.error("Enter the PO number.")
+                return
+            wrong = [c for c, v in ticks.items() if not v]
             stamp = now_str()
-            updates = {"po_checks": json.dumps(ticks), "purchase_order_no": po_no.strip() or None, "po_amount": float(po_amt),
-                       "order_value": float(value), "pi_amount": float(value),
-                       "plan_advance": terms[0], "plan_dispatch": terms[1], "plan_install": terms[2],
-                       "pi_number": pi_no.strip() or None, "delivery_days": int(days), "po_date": str(po_date),
-                       "po_owner_id": o.get("po_owner_id") or user["employee_id"], "updated_at": stamp}
-            if note.strip():
-                updates["collection_remarks"] = f"{today_ist().strftime('%d %b')}: PO check — {note.strip()}"
-            if all_ok:
-                if not po_no.strip():
-                    st.error("Enter the PO number to verify the PO.")
+            base = {"po_checks": json.dumps(ticks), "purchase_order_no": po_no.strip(), "po_amount": float(po_amt),
+                    "order_value": float(value), "pi_amount": float(value), "pi_number": pi_no.strip() or None,
+                    "delivery_days": int(days_in), "po_date": str(po_date),
+                    "plan_advance": terms[0], "plan_dispatch": terms[1], "plan_install": terms[2],
+                    "po_owner_id": o.get("po_owner_id") if clean(o.get("po_owner_id"), "") else user["employee_id"],
+                    "updated_at": stamp}
+            rnd = {"order_id": oid, "round_no": len(rounds) + 1, "po_number": po_no.strip(), "po_amount": float(po_amt),
+                   "delivery_days": int(days_in), "terms": f"{terms[0]:g}/{terms[1]:g}/{terms[2]:g}",
+                   "checked_by": user["employee_id"], "checked_at": stamp}
+            if ok_btn:
+                if wrong:
+                    st.error("Not everything is ticked. Tick all points, or send the PO back for revision.")
                     return
-                updates.update({"po_verified_at": stamp, "po_verified_by": user["employee_id"],
-                                "expected_delivery_date": str(today_ist() + datetime.timedelta(days=int(days))),
-                                "next_collection_date": f"{today_ist() + datetime.timedelta(days=1)} 11:00:00"})
-            if db.update_row("orders", "order_id", oid, updates):
-                if all_ok:
-                    db.log_event("PO_VERIFIED", "orders", oid, None, {"delivery_days": int(days)})
-                    st.toast(f"PO verified. Delivery expected {updates['expected_delivery_date']}. "
-                             f"Collect the {terms[0]:g}% advance." if terms[0] else "PO verified.", icon="✅")
-                else:
-                    st.toast("Saved. The PO stays unverified until every check is ticked.", icon="📝")
-                st.rerun()
+                db.insert_row("po_revisions", {**rnd, "result": "Verified", "notes": note.strip() or None})
+                base.update({"po_verified_at": stamp, "po_verified_by": user["employee_id"], "po_status": "Verified",
+                             "expected_delivery_date": str(today_ist() + datetime.timedelta(days=int(days_in)))})
+                if terms[0] > 0:
+                    base["next_collection_date"] = f"{today_ist() + datetime.timedelta(days=1)} 11:00:00"
+                if db.update_row("orders", "order_id", oid, base):
+                    db.log_event("PO_VERIFIED", "orders", oid, None, {"round": rnd["round_no"]})
+                    st.toast(f"PO verified. Delivery expected {base['expected_delivery_date']}."
+                             + (f" Collect the {terms[0]:g}% advance." if terms[0] else ""), icon="✅")
+                    st.rerun()
+                st.error(db.last_error)
             else:
+                if not wrong and not note.strip():
+                    st.error("Untick what is wrong, or write what needs revising.")
+                    return
+                db.insert_row("po_revisions", {**rnd, "result": "Sent for revision", "mismatches": json.dumps(wrong),
+                                               "notes": note.strip() or None})
+                base.update({"po_status": "Revision requested",
+                             "collection_remarks": f"{today_ist().strftime('%d %b')}: PO sent back — "
+                                                   + "; ".join(wrong + ([note.strip()] if note.strip() else []))})
+                if db.update_row("orders", "order_id", oid, base):
+                    db.log_event("PO_REVISION_REQUESTED", "orders", oid, None, {"round": rnd["round_no"], "wrong": wrong})
+                    st.toast(f"PO sent back for revision (round {rnd['round_no']}). Check the revised PO when it arrives.", icon="↩️")
+                    st.rerun()
                 st.error(db.last_error)
 
 
@@ -490,7 +600,7 @@ def _claim(db, unclaimed, user):
             oid = db.insert_row("orders", {
                 "order_id": db.next_order_id(), "lead_id": int(r["lead_id"]), "client_id": r["client_id"],
                 "quotation_id": qid.get(r["lead_id"]), "order_value": round(quoted * 1.18, 0), "pi_amount": round(quoted * 1.18, 0),
-                "payment_status": "Pending", "po_owner_id": user["employee_id"], "po_claimed_at": stamp,
+                "payment_status": "Pending", "po_owner_id": user["employee_id"], "po_claimed_at": stamp, "po_status": "Received",
                 "plan_advance": 50, "plan_dispatch": 40, "plan_install": 10,
                 "created_by": user["employee_id"], "created_at": stamp})
             if oid is None:
@@ -503,37 +613,73 @@ def _claim(db, unclaimed, user):
 
 
 # ------------------------------------------------------------------ team (admin)
-def _team(db, orders):
-    emp = db.fetch_all("employees")
-    team = emp[(emp["role"] == "PO") & (emp["is_active"] == 1)]
-    if team.empty:
-        st.info("No PO & PI team members yet. Add them in Secrets or Users with the role PO.")
+def _po_progress_admin(db, orders):
+    import plotly.express as px
+    if orders.empty:
+        st.info("No orders yet.")
         return
-    pays = db.fetch_all("payments")
-    fu = db.fetch_all("payment_followups")
-    month = str(today_ist())[:7]
-    rows = []
-    for _, e in team.iterrows():
-        mine = orders[orders["po_owner_id"] == e["employee_id"]] if not orders.empty else orders
-        due_now, overdue = 0.0, 0
-        for _, o in mine.iterrows():
-            m = current_milestone(o)
-            if m and m["due"] and m["due"] <= today_ist():
-                due_now += m["balance"]
-                overdue += m["due"] < today_ist()
-        p = pays[pays["order_id"].isin(mine["order_id"])] if not pays.empty and not mine.empty else pays.iloc[0:0] if not pays.empty else pays
-        f = fu[(fu["logged_by"] == e["employee_id"]) & (fu["logged_at"].astype(str).str[:7] == month)] if not fu.empty else fu
-        rows.append({"PO member": e["full_name"], "Orders claimed": len(mine),
-                     "PO verified": int(mine["po_verified_at"].notna().sum()) if len(mine) else 0,
-                     "Fully paid": sum(1 for _, o in mine.iterrows() if current_milestone(o) is None) if len(mine) else 0,
-                     "Collected this month": float(p[p["paid_on"].astype(str).str[:7] == month]["amount"].sum()) if len(p) else 0.0,
-                     "Due now": due_now, "Overdue orders": overdue,
-                     "Payment calls this month": len(f)})
-    df = pd.DataFrame(rows)
-    show = df.copy()
-    for c in ("Collected this month", "Due now"):
-        show[c] = show[c].map(inr)
-    st.dataframe(show, width="stretch", hide_index=True)
-    unowned = orders[orders["po_owner_id"].isna()] if not orders.empty else orders
-    if len(unowned):
-        st.caption(f"{len(unowned)} older order(s) have no PO owner yet; every PO member can see them.")
+    o = orders.copy()
+    o["stage"] = [stage_label(x) for _, x in o.iterrows()]
+    o["paid_pct"] = [paid_percent(x) for _, x in o.iterrows()]
+    o["po_days"] = [po_days(x) for _, x in o.iterrows()]
+    verified_days = o["po_days"].dropna()
+    render_kpi_cards([
+        {"label": "Orders", "value": len(o), "icon": "📦", "tone": "blue", "sub": f"{int((o['stage'] == 'Completed').sum())} completed"},
+        {"label": "POs waiting to verify", "value": int(o["stage"].isin(["PO to verify", "PO revision pending"]).sum()), "icon": "🧾",
+         "tone": "amber", "sub": f"{int((o['stage'] == 'PO revision pending').sum())} with the client for revision"},
+        {"label": "PO revisions requested", "value": int(o["po_revisions"].fillna(0).sum()), "icon": "↩️", "tone": "red"},
+        {"label": "Average time to verify a PO", "value": f"{verified_days.mean():.1f} days" if len(verified_days) else "—",
+         "icon": "⏱️", "tone": "navy"},
+        {"label": "Money received", "value": f"{o['received'].sum() / o['order_value'].sum() * 100:.0f}%" if o["order_value"].sum() else "—",
+         "icon": "💵", "tone": "green", "sub": f"{inr(o['received'].sum())} of {inr(o['order_value'].sum())}"},
+    ])
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("###### Orders by stage")
+        sc = o["stage"].value_counts().reindex(PO_STAGES).fillna(0).astype(int).reset_index()
+        sc.columns = ["Stage", "Orders"]
+        fig = px.bar(sc, x="Orders", y="Stage", orientation="h", text="Orders", color_discrete_sequence=["#184B9C"],
+                     category_orders={"Stage": PO_STAGES})
+        fig.update_traces(textposition="outside", cliponaxis=False)
+        fig.update_layout(height=330, margin=dict(t=10, b=10, l=10, r=30), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                          xaxis_title="", yaxis_title="")
+        st.plotly_chart(fig, width="stretch")
+    with c2:
+        st.markdown("###### PO team: speed and revisions")
+        emp = db.fetch_all("employees")
+        team = emp[(emp["role"] == "PO") & (emp["is_active"] == 1)]
+        pays = db.fetch_all("payments")
+        fu = db.fetch_all("payment_followups")
+        month = str(today_ist())[:7]
+        rows = []
+        for _, e in team.iterrows():
+            mine = o[o["po_owner_id"] == e["employee_id"]]
+            p_ = pays[pays["order_id"].isin(mine["order_id"])] if not pays.empty else pays
+            f_ = fu[(fu["logged_by"] == e["employee_id"]) & (fu["logged_at"].astype(str).str[:7] == month)] if not fu.empty else fu
+            d_ = mine["po_days"].dropna()
+            rows.append({"PO member": e["full_name"], "Claimed": len(mine), "Verified": int(mine["po_verified_at"].notna().sum()),
+                         "Revisions requested": int(mine["po_revisions"].fillna(0).sum()),
+                         "Avg days to verify": round(d_.mean(), 1) if len(d_) else None,
+                         "Completed": int((mine["stage"] == "Completed").sum()),
+                         "Collected this month": inr(p_[p_["paid_on"].astype(str).str[:7] == month]["amount"].sum()) if len(p_) else "₹0",
+                         "Payment calls (month)": len(f_)})
+        if rows:
+            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+        else:
+            st.info("No PO & PI team members yet.")
+    st.markdown("###### Every order")
+    tbl = o.assign(_r=o["stage"].map({s_: i for i, s_ in enumerate(PO_STAGES)})).sort_values(["_r", "created_at"])
+    st.dataframe(pd.DataFrame({
+        "Client": tbl["client_id"] + " · " + tbl["client_name"], "Order": tbl["order_id"], "PO member": tbl["po_owner_name"].fillna("unclaimed"),
+        "Stage": tbl["stage"], "Paid %": tbl["paid_pct"], "Order value": tbl["order_value"].map(inr), "Received": tbl["received"].map(inr),
+        "Terms": [plan_label(x) for _, x in tbl.iterrows()], "PO revisions": tbl["po_revisions"].fillna(0).astype(int),
+        "Days to verify": tbl["po_days"], "Salesperson": tbl["sales_person"].fillna("—")}),
+        width="stretch", hide_index=True,
+        column_config={"Paid %": st.column_config.ProgressColumn("Paid %", min_value=0, max_value=100, format="%.0f%%")})
+
+
+def render_po_progress(db_adapter, current_user):
+    """Admin: PO progress across the whole PO & PI team."""
+    st.markdown(CARD_CSS, unsafe_allow_html=True)
+    page_title("PO progress", "Every order's PO check, payment progress and the PO team's speed.")
+    _po_progress_admin(db_adapter, db_adapter.fetch_all("orders"))

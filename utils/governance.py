@@ -20,6 +20,7 @@ def reassign_leads(db, leads, target: str, new_emp_id: str, reason: str):
     moved, errors = 0, []
     for _, lead in leads.iterrows():
         old = lead.get(field)
+        old = None if old is None or str(old) == "nan" else old
         if old == new_emp_id:
             continue
         updates = {field: new_emp_id, "updated_at": now_str()}

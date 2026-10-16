@@ -43,6 +43,10 @@ class BaseDatabaseAdapter(ABC):
     def claim_lead(self, lead_id: int, qs_id: str) -> bool:
         """Claim an unassigned lead. False if someone else already claimed it."""
 
+    def claim_followup(self, lead_id: int, emp_id: str) -> bool:
+        """Take an unclaimed follow-up (followup owner empty). Engines must make this atomic."""
+        raise NotImplementedError
+
     # ---------- ID generators (based on the highest existing value, not row counts)
     @abstractmethod
     def next_client_id(self, prefix: str, month_label: str) -> str: ...

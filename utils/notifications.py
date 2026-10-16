@@ -17,12 +17,23 @@ def collect_alerts(db, user: dict, owner_filter: str = None) -> dict:
     who = owner_filter or (None if is_admin else emp_id)
     empty = pd.DataFrame()
     out = {k: empty for k in ("overdue", "today", "my_tickets", "unclaimed", "approvals", "revisions",
-                              "collect_overdue", "collect_today", "deliveries", "verify")}
+                              "collect_overdue", "collect_today", "deliveries", "verify", "no_sam", "fu_unclaimed")}
 
     leads = db.fetch_all("leads_master")
     if not leads.empty:
         active = open_leads(leads)
         mine = call_queue(leads, user, owner_filter)
+        mine = mine[mine["followup_owner_id"].notna()] if not mine.empty else mine
+        if role in ("QS", "SAM", "LGE", "ADMIN"):
+            from views.quotation_portal import unclaimed_followups
+            out["fu_unclaimed"] = unclaimed_followups(leads, user)
+        if role in ("ADMIN", "LGE", "QS", "SAM"):
+            nosam = active[active["assigned_sam_id"].isna()]
+            if role != "ADMIN":
+                nosam = nosam[nosam["handled_by_lge_id"] == emp_id]
+            elif owner_filter:
+                nosam = nosam[nosam["handled_by_lge_id"] == owner_filter]
+            out["no_sam"] = nosam
         if not mine.empty:
             buckets = mine["next_followup_at"].map(call_bucket)
             out["overdue"] = mine[buckets == "overdue"]
@@ -68,4 +79,4 @@ def alert_badge_counts(db, user: dict) -> tuple:
     follow = len(a["overdue"]) + len(a["today"])
     quote = len(a["approvals"]) + len(a["revisions"]) + (len(a["my_tickets"]) + len(a["unclaimed"]) if user.get("role") == "QS" else 0)
     collect = len(a["collect_overdue"]) + len(a["collect_today"]) + len(a["deliveries"]) + len(a["verify"])
-    return follow, quote, collect
+    return follow, quote, collect, len(a["no_sam"])

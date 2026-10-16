@@ -97,17 +97,36 @@ def tracker(order) -> tuple:
     return steps, round(sum(ok for _, ok in steps) / len(steps) * 100)
 
 
+def _has(v) -> bool:
+    return v is not None and str(v) not in ("", "nan", "None", "NaT")
+
+
 def stage_label(order) -> str:
-    if not order.get("po_verified_at"):
-        return "PO to verify"
+    """Where the order is. 'Completed' only when fully paid AND installed."""
+    if not _has(order.get("po_verified_at")):
+        return "PO revision pending" if order.get("po_status") == "Revision requested" else "PO to verify"
     m = current_milestone(order)
+    dispatched, installed = _has(order.get("dispatched_at")), _has(order.get("installed_at"))
     if m is None:
-        return "Fully paid"
+        return "Completed" if installed else ("Awaiting installation" if dispatched else "Material dispatch")
     if m["trigger"] == "po":
         return "Collect advance"
+    if not dispatched:
+        return "Material dispatch"
     if m["trigger"] == "dispatch":
-        return "Collect before dispatch" if not order.get("dispatched_at") else "Collect dispatch payment"
-    return "Awaiting installation" if not order.get("installed_at") else "Collect final payment"
+        return "Collect dispatch payment"
+    return "Awaiting installation" if not installed else "Collect final payment"
+
+
+def paid_percent(order) -> float:
+    value = float(order.get("order_value") or 0)
+    return round(min(100.0, float(order.get("received") or 0) / value * 100), 1) if value else 0.0
+
+
+def po_days(order):
+    """Days from claiming the PO to verifying it (None while not verified)."""
+    a, b = parse_ts(order.get("po_claimed_at") or order.get("created_at")), parse_ts(order.get("po_verified_at"))
+    return round((b - a).total_seconds() / 86400, 1) if a and b and b >= a else None
 
 
 def checks(order) -> dict:
@@ -124,13 +143,15 @@ def tracker_html(order, compact=False) -> str:
         f"<div style='width:{18 if compact else 26}px; height:{18 if compact else 26}px; margin:0 auto; border-radius:50%;"
         f" background:{'#00A859' if ok else '#E2E8F0'}; color:#FFFFFF; font-size:{11 if compact else 13}px; font-weight:800;"
         f" display:flex; align-items:center; justify-content:center;'>{'✓' if ok else i + 1}</div>"
-        + ("" if compact else f"<div style='font-size:11.5px; color:{'#0E2C68' if ok else '#94A3B8'}; margin-top:4px;"
+        + ("" if compact else f"<div style='font-size:11.5px; color:{'#0E2C68' if ok else '#64748B'}; margin-top:4px;"
                               f" font-weight:{700 if ok else 500}; line-height:1.2;'>{step}</div>")
         + "</div>" for i, (step, ok) in enumerate(steps))
+    paid = paid_percent(order)
     bar = (f"<div style='background:#E2E8F0; height:6px; border-radius:6px; margin:{'6px' if compact else '10px'} 0 2px;'>"
-           f"<div style='width:{pct}%; background:linear-gradient(90deg,#00A859,#184B9C); height:100%; border-radius:6px;'></div></div>")
+           f"<div style='width:{paid}%; background:linear-gradient(90deg,#00874A,#184B9C); height:100%; border-radius:6px;'></div></div>")
     return (f"<div style='display:flex; gap:4px; align-items:flex-start;'>{dots}</div>{bar}"
-            f"<div style='font-size:12px; color:#64748B; text-align:right;'>{pct}% complete</div>")
+            f"<div style='font-size:12px; color:#475569; text-align:right;'>{paid:g}% of the money received · "
+            f"{sum(ok for _, ok in steps)} of {len(steps)} steps done</div>")
 
 
 def payment_alerts(orders: pd.DataFrame, owner: str = None) -> dict:

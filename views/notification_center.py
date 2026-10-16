@@ -41,7 +41,7 @@ def render_notification_center(db_adapter, current_user):
         owner = people.get(pick)
 
     a = collect_alerts(db_adapter, current_user, owner)
-    n_follow = len(a["overdue"]) + len(a["today"])
+    n_follow = len(a["overdue"]) + len(a["today"]) + len(a["fu_unclaimed"])
     n_quote = len(a["my_tickets"]) + len(a["revisions"]) + len(a["unclaimed"]) + len(a["approvals"])
     n_collect = len(a["collect_overdue"]) + len(a["collect_today"]) + len(a["deliveries"]) + len(a["verify"])
     from views.po_portal import can_use_po
@@ -69,10 +69,19 @@ def render_notification_center(db_adapter, current_user):
                              f"{len(a['deliveries'])} deliveries soon"})
     render_kpi_cards(tiles)
 
+    n_nosam = len(a["no_sam"])
+    if n_nosam:
+        tiles.append({"label": "Leads without a salesperson", "value": n_nosam, "icon": "👤", "tone": "red",
+                      "sub": "assign someone so they get followed up"})
     tab_names = [f"📞 Follow-up alerts ({n_follow})", f"📄 Quotation alerts ({n_quote})"]
     if pay_user:
         tab_names.append(f"💰 Payment alerts ({n_collect})")
+    if n_nosam:
+        tab_names.append(f"👤 No salesperson ({n_nosam})")
     tabs = st.tabs(tab_names)
+    if n_nosam:
+        with tabs[-1]:
+            _no_salesperson(a["no_sam"])
 
     logs = db_adapter.fetch_all("followup_logs")
     lq = latest_quotes(db_adapter.fetch_all("quotations_master"))
@@ -80,7 +89,27 @@ def render_notification_center(db_adapter, current_user):
 
     # ------------------------------------------------------------- follow-ups
     with tabs[0]:
-        t_over, t_today = st.tabs([f"⏰ Overdue calls ({len(a['overdue'])})", f"📅 Calls due today ({len(a['today'])})"])
+        t_over, t_today, t_unc = st.tabs([f"⏰ Overdue calls ({len(a['overdue'])})", f"📅 Calls due today ({len(a['today'])})",
+                                          f"🙋 Unclaimed follow-ups ({len(a['fu_unclaimed'])})"])
+        with t_unc:
+            if a["fu_unclaimed"].empty:
+                st.success("Every open lead has someone following up. 🎉")
+            else:
+                st.caption("Nobody owns these follow-ups yet.")
+                for _, r in a["fu_unclaimed"].head(MAX_PER_SECTION).iterrows():
+                    st.markdown(card_html(r["client_id"], r["client_name"], r.get("company_name"),
+                                          pills=[(f"Stage: {r['final_status']}", "blue"), ("Unclaimed", "amber")],
+                                          fields=[("Product", f"{esc(r['product'])} × {r['qty']}"),
+                                                  ("Salesperson", esc(r.get("assigned_salesperson")))],
+                                          links=contact_links(r.get("phone_number"), None, str(r["client_name"])),
+                                          accent="amber"), unsafe_allow_html=True)
+                    if role != "ADMIN" and st.button(f"🙋 Claim follow-up for {r['client_id']}", key=f"al_fu_{r['lead_id']}",
+                                                     type="primary"):
+                        if db_adapter.claim_followup(int(r["lead_id"]), current_user["employee_id"]):
+                            st.toast(f"{r['client_id']} is yours to follow up.", icon="🙋")
+                        else:
+                            st.toast(db_adapter.last_error, icon="⚠️")
+                        st.rerun()
         for tab, key, prefix in [(t_over, "overdue", "ao"), (t_today, "today", "at")]:
             with tab:
                 df = a[key]
@@ -112,6 +141,22 @@ def render_notification_center(db_adapter, current_user):
     if pay_user:
         with tabs[2]:
             _payment_alerts(a)
+
+
+def _no_salesperson(df):
+    st.caption("These leads have no salesperson, so nobody is responsible for selling them yet.")
+    for _, r in df.sort_values("ingested_at").head(MAX_PER_SECTION).iterrows():
+        st.markdown(card_html(
+            r["client_id"], r["client_name"], r.get("company_name"), pills=[("No salesperson", "red")],
+            fields=[("Product", f"{esc(r['product'])} × {r['qty']}"), ("City", esc(r.get("city"))),
+                    ("Source", esc(r.get("source"))), ("Received", esc(fmt_12h(r.get("ingested_at")))),
+                    ("Added by", esc(r.get("leads_handled_by")))],
+            links=contact_links(r.get("phone_number"), r.get("email"), str(r["client_name"])), accent="red"),
+            unsafe_allow_html=True)
+        if st.button("👤 Assign salesperson", key=f"nosam_{r['lead_id']}", type="primary"):
+            st.session_state["goto"] = {"page": "📥 Add new lead"}
+            st.session_state["assign_goto"] = int(r["lead_id"])
+            st.rerun()
 
 
 def _payment_alerts(a):

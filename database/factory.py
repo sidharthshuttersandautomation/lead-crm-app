@@ -55,6 +55,27 @@ def sync_products(db):
 
 
 @st.cache_resource(show_spinner=False)
+def _auto_import_once(db_path_key: str, path: str):
+    from pathlib import Path
+    from utils.excel_import import apply_plan, convert_workbook
+    file = Path(path)
+    if not file.is_absolute():
+        file = Path(__file__).resolve().parent.parent / file
+    if not file.exists():
+        print(f"Auto-import skipped: {file} not found.")
+        return False
+    db = get_adapter()
+    db.set_actor("SYSTEM")
+    try:
+        result = apply_plan(db, convert_workbook(str(file), db), replace_existing=False)
+        print("Auto-import:", result)
+        return True
+    except Exception as exc:
+        print("Auto-import failed:", exc)
+        return False
+
+
+@st.cache_resource(show_spinner=False)
 def _post_account_migrations_once(db_path_key: str, employee_count: int):
     """Default flags for accounts created after start-up (runs again whenever the number of employees changes)."""
     get_adapter().run_data_migrations()
@@ -195,6 +216,11 @@ def bootstrap_database(db_path_key: str):
     if db.count_rows("employees") > 0:
         _sync_salespeople_once(db_path_key, tuple(SALESPERSON_LIST))
         _post_account_migrations_once(db_path_key, db.count_rows("employees"))
+
+    # Optional: load your own data automatically into an empty database (e.g. after a Streamlit Cloud restart).
+    import_file = _secret("bootstrap", "import_file")
+    if import_file and db.count_rows("employees") > 0 and db.count_rows("leads_master") == 0:
+        _auto_import_once(db_path_key, str(import_file))
 
     if db.count_rows("employees") > 0 and db.count_rows("leads_master") == 0 \
             and str(_secret("bootstrap", "seed_demo_data", "false")).lower() == "true":

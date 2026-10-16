@@ -7,7 +7,7 @@ Written in plain SQL that maps directly to Postgres later:
   REAL amounts                       ->  NUMERIC(12,2)
 """
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 DDL = [
     """
@@ -182,6 +182,21 @@ DDL = [
         logged_at     TEXT NOT NULL
     )""",
     """
+    CREATE TABLE IF NOT EXISTS po_revisions (
+        rev_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id      TEXT NOT NULL REFERENCES orders(order_id),
+        round_no      INTEGER NOT NULL,
+        result        TEXT NOT NULL,
+        mismatches    TEXT,
+        notes         TEXT,
+        po_number     TEXT,
+        po_amount     REAL,
+        delivery_days INTEGER,
+        terms         TEXT,
+        checked_by    TEXT REFERENCES employees(employee_id),
+        checked_at    TEXT NOT NULL
+    )""",
+    """
     CREATE TABLE IF NOT EXISTS audit_log (
         audit_id    INTEGER PRIMARY KEY AUTOINCREMENT,
         at          TEXT NOT NULL,
@@ -235,6 +250,7 @@ MIGRATION_COLUMNS = [
     ("orders", "plan_dispatch", "REAL"),
     ("orders", "plan_install", "REAL"),
     ("orders", "po_claimed_at", "TEXT"),
+    ("orders", "po_status", "TEXT"),
 ]
 
 # Value renames applied on start-up (safe to run repeatedly).
@@ -257,5 +273,5 @@ DATA_MIGRATIONS = [
 # Tables the generic insert/update/delete methods are allowed to touch.
 WRITABLE_TABLES = {
     "employees", "products", "customers", "leads_master",
-    "quotations_master", "followup_logs", "orders", "payments", "call_snoozes", "targets", "payment_followups",
+    "quotations_master", "followup_logs", "orders", "payments", "call_snoozes", "targets", "payment_followups", "po_revisions",
 }

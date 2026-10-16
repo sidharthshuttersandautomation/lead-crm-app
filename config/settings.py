@@ -31,7 +31,7 @@ ROLE_DESCRIPTIONS = {
     "PO": "PO & PI Team",
 }
 # Roles that add leads (used in "Added by" filters)
-LEAD_ADDER_ROLES = ["LGE", "QS", "ADMIN"]
+LEAD_ADDER_ROLES = ["LGE", "QS", "SAM", "ADMIN"]
 # Roles that record customer payments
 COLLECTION_ROLES = ["ACCOUNTS", "ADMIN"]
 # Roles allowed to approve quotations (shown in "Approved by")
@@ -161,8 +161,13 @@ PAYMENT_PLAN = [("Advance (on PO)", 50, "po"), ("Before dispatch", 40, "dispatch
 PAYMENT_TERM_PRESETS = {"50 / 40 / 10 (standard)": (50, 40, 10), "100% advance": (100, 0, 0),
                         "60 / 30 / 10": (60, 30, 10), "20 / 70 / 10": (20, 70, 10), "10 / 80 / 10": (10, 80, 10),
                         "30 / 60 / 10": (30, 60, 10), "Custom": None}
-PO_CHECKS = ["Amount matches the quotation", "Terms & conditions match", "Delivery period matches",
-             "Billing / GST details correct", "Scope & quantity match"]
+# What the PO & PI team checks on every Process Order. All must be ticked to verify the PO.
+PO_CHECKS = ["Amount mentioned matches the quotation", "Delivery terms (period & place) are correct",
+             "Payment terms are correct", "Taxes / GST & billing details are correct",
+             "Scope, items & quantity match", "Freight, installation & other terms are correct"]
+# Order stages shown in the PO desk (in order). "Material dispatch" = ready / waiting to dispatch.
+PO_STAGES = ["PO to verify", "PO revision pending", "Collect advance", "Material dispatch",
+             "Collect dispatch payment", "Awaiting installation", "Collect final payment", "Completed"]
 DELIVERY_ALERT_DAYS = 2           # "delivery in 2 days — ask for the dispatch payment"
 DEFAULT_DELIVERY_DAYS = 20
 PAYMENT_OUTCOMES = ["Payment received", "Promised to pay", "Payment delayed", "Not reachable", "Asked to call later"]

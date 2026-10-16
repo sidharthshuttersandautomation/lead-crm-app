@@ -26,8 +26,8 @@ CSS = """
 .rem { position: relative; display: grid; grid-template-columns: 56px 1fr auto; gap: 16px; align-items: center;
   background: linear-gradient(120deg, #184B9C 0%, #0E2C68 100%); color: #FFFFFF; border-radius: 16px;
   padding: 16px 20px; margin: 0 0 6px; box-shadow: 0 10px 28px rgba(14,44,104,0.25); overflow: hidden; }
-.rem::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; background: #00A859; }
-.rem.late::before { background: #F43F5E; }
+.rem::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; background:#00874A; }
+.rem.late::before { background:#E11D48; }
 .rem .ic { width: 52px; height: 52px; border-radius: 50%; background: rgba(255,255,255,0.12); display: flex;
   align-items: center; justify-content: center; font-size: 24px; animation: rem-ring 1.6s ease-in-out infinite; }
 .rem .nm { font-size: 18px; font-weight: 800; color: #FFFFFF; letter-spacing: -0.01em; }
@@ -38,10 +38,10 @@ CSS = """
 .rem .when { text-align: right; }
 .rem .when .tm { font-size: 22px; font-weight: 800; color: #FFFFFF; font-variant-numeric: tabular-nums; }
 .rem .when .st { display: inline-block; margin-top: 4px; padding: 3px 12px; border-radius: 20px; font-size: 12.5px;
-  font-weight: 800; background: #00A859; color: #FFFFFF; }
-.rem.late .when .st { background: #F43F5E; }
+  font-weight: 800; background:#00874A; color: #FFFFFF; }
+.rem.late .when .st { background:#E11D48; }
 .rem .links { grid-column: 2 / 4; }
-.rem .links .call-btn.phone { background: #00A859; }
+.rem .links .call-btn.phone { background:#00874A; }
 .rem .links .call-btn.wa { background: rgba(255,255,255,0.95); }
 [class*="st-key-remact_"] [data-testid="stBaseButton-secondary"] { background: #FFFFFF !important; color: #184B9C !important;
   border: 1.5px solid #C9D6EE !important; box-shadow: none !important; }

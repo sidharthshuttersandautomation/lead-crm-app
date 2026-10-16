@@ -8,10 +8,11 @@ ROOT_DIR = Path(__file__).resolve().parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+import utils.compat  # noqa: F401  (must run before anything builds a DataFrame)
 import streamlit as st
 
 st.set_page_config(page_title="Sidharth Shutter CRM", page_icon="🏢", layout="wide",
-                   initial_sidebar_state="expanded")
+                   initial_sidebar_state="auto")
 
 from components.call_reminder import render_call_reminders
 from components.desktop_notify import permission_control
@@ -26,7 +27,7 @@ from utils.notifications import alert_badge_counts
 from views.admin_portal import render_audit_log, render_user_management
 from views.client_inspector import render_client_inspector
 from views.data_import import render_data_import
-from views.po_portal import can_use_po, render_po_portal
+from views.po_portal import can_use_po, render_po_portal, render_po_progress
 from views.admin_quotes import render_admin_quote_desk, render_quote_register
 from views.employee_progress import render_my_progress_report
 from views.employee_report import render_employee_report
@@ -71,8 +72,9 @@ role = user["role"]
 initials = "".join(p[0].upper() for p in user["name"].split()[:2]) or "U"
 
 try:
-    _f, _q, _c = alert_badge_counts(db_adapter, user)
-    _badge = " ".join(x for x in [f"📞{_f}" if _f else "", f"📄{_q}" if _q else "", f"💰{_c}" if _c else ""] if x)
+    _f, _q, _c, _n = alert_badge_counts(db_adapter, user)
+    _badge = " ".join(x for x in [f"📞{_f}" if _f else "", f"📄{_q}" if _q else "", f"💰{_c}" if _c else "",
+                                  f"👤{_n}" if _n else ""] if x)
 except Exception:
     _badge = ""
 ALERTS = ("🔔 Alerts", render_notification_center)
@@ -106,7 +108,7 @@ ADMIN_GROUPS = [
     grouped("📄 Quotations", [("📋 Quotation desk", render_admin_quote_desk), ("📄 Quotation register", render_quote_register)],
             "sub_quotes"),
     grouped("💼 Sales & money", [("💼 Sales pipeline", render_sales_portal), COLLECTIONS, ("🧾 PO & payments", render_po_portal),
-                                ("⚙️ Order fulfilment", render_process_portal)], "sub_money"),
+                                ("📈 PO progress", render_po_progress), ("⚙️ Order fulfilment", render_process_portal)], "sub_money"),
     grouped("⚙️ Admin tools", [("🔐 Users", render_user_management), ("🧾 Audit trail", render_audit_log),
                               ("📦 Master export & backup", render_master_export), ("📤 Import from Excel", render_data_import)],
             "sub_tools"),
@@ -122,7 +124,8 @@ NAV = {
         FOLLOWUPS, ("📥 Add new lead", render_lead_portal), INSPECTOR, PROGRESS, ACCOUNT,
     ],
     "LGE": [("📥 Add new lead", render_lead_portal), ALERTS, FOLLOWUPS, INSPECTOR, PROGRESS, ACCOUNT],
-    "SAM": [("💼 Sales pipeline", render_sales_portal), ALERTS, FOLLOWUPS, INSPECTOR, PROGRESS, ACCOUNT],
+    "SAM": [("💼 Sales pipeline", render_sales_portal), ALERTS, ("📥 Add new lead", render_lead_portal), FOLLOWUPS,
+            INSPECTOR, PROGRESS, ACCOUNT],
     "OPERATIONS": [("⚙️ Order fulfilment", render_process_portal), ALERTS, INSPECTOR, PROGRESS, ACCOUNT],
     "PO": [("🧾 PO & payments", render_po_portal), ALERTS, ("💰 Collections", render_collections_portal),
            PROGRESS, ACCOUNT],
@@ -159,7 +162,7 @@ with st.sidebar:
     show_logo()
     st.markdown(f"""
         <div style='background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.18); border-radius:12px; padding:12px 14px; margin-bottom:20px; display:flex; align-items:center; gap:12px;'>
-            <div style='background:#00A859; font-weight:800; font-size:15px; width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-shrink:0;'>{initials}</div>
+            <div style='background:#00874A; font-weight:800; font-size:15px; width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-shrink:0;'>{initials}</div>
             <div>
                 <div style='font-size:14.5px; font-weight:700;'>{st.session_state['user']['name']}</div>
                 <div style='font-size:11.5px; font-weight:700;'>{ROLE_DESCRIPTIONS.get(role, role)}</div>

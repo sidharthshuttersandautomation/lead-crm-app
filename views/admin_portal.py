@@ -158,10 +158,22 @@ FIELD = {"final_status": "stage", "quotation_status": "quotation status", "claim
 HIDDEN = {"password_hash", "updated_at", "created_at", "claimed_at", "po_checks"}
 
 
+def _json(value) -> dict:
+    """Audit old/new values as a dict; empty cells (NaN/None) become {}."""
+    import json
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        out = json.loads(value)
+        return out if isinstance(out, dict) else {}
+    except ValueError:
+        return {}
+
+
 def _describe(r, names, leads, quotes, orders):
     import json
     a, t, rid = r["action"], r["table_name"], str(r["record_id"] or "")
-    new = json.loads(r["new_values"]) if r.get("new_values") else {}
+    new = _json(r.get("new_values"))
 
     def lead(i):
         return leads.get(str(i), f"lead {i}")
@@ -199,10 +211,10 @@ def _describe(r, names, leads, quotes, orders):
 
 def _changes(r, names):
     import json
-    if r["action"] != "UPDATE" or not r.get("new_values"):
+    new = _json(r.get("new_values"))
+    if r["action"] != "UPDATE" or not new:
         return ""
-    old = json.loads(r["old_values"]) if r.get("old_values") else {}
-    new = json.loads(r["new_values"])
+    old = _json(r.get("old_values"))
     chips = []
     for k, v in new.items():
         if k in HIDDEN:
@@ -213,7 +225,7 @@ def _changes(r, names):
         v = None if str(v).lower() in ("nan", "none") else v
         chips.append(f"<span style='display:inline-block; background:#F1F5F9; border-radius:8px; padding:2px 8px; margin:3px 4px 0 0;"
                      f" font-size:12px; color:#475569;'>{html.escape(FIELD.get(k, k.replace('_', ' ')))}: "
-                     f"<s style='color:#94A3B8;'>{html.escape(str(o if o not in (None, '') else '—'))[:40]}</s> → "
+                     f"<s style='color:#64748B;'>{html.escape(str(o if o not in (None, '') else '—'))[:40]}</s> → "
                      f"<b style='color:#0E2C68;'>{html.escape(str(v if v not in (None, '') else '—'))[:40]}</b></span>")
     return "".join(chips[:6])
 
@@ -311,7 +323,7 @@ def render_audit_log(db_adapter, current_user):
                   display:flex; align-items:center; justify-content:center; flex-shrink:0;'>{html.escape(initials)}</div>
                 <div style='flex:1; min-width:0;'>
                   <div style='font-size:14px; color:#1E293B;'>{ACTION_ICON.get(r["action"], "•")} <b>{html.escape(str(r["who"]))}</b> {r["text"]}</div>
-                  <div style='font-size:12px; color:#94A3B8; margin-top:2px;'>{str(r["at"])[11:16]} · {html.escape(r["category"])}</div>
+                  <div style='font-size:12px; color:#64748B; margin-top:2px;'>{str(r["at"])[11:16]} · {html.escape(r["category"])}</div>
                   <div>{_changes(r, names)}</div>
                 </div></div>"""))
         st.markdown("".join(html_parts), unsafe_allow_html=True)
