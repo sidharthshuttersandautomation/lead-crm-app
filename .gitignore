@@ -1,12 +1,27 @@
-# Exclude Streamlit Secrets & Credentials
+# Secrets - never commit
 .streamlit/secrets.toml
 service_account.json
+*.pem
+*.key
 
-# Exclude Virtual Environment
-myenv/
-venv/
-.venv/
+# Database files - contain customer data and password hashes
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+backups/
 
-# Python Cache
+# Python
 __pycache__/
 *.pyc
+.venv/
+venv/
+myenv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

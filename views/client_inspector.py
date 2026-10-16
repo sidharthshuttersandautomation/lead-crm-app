@@ -1,116 +1,115 @@
-"""
-views/client_inspector.py - Client 360 Inspector with Advanced Handler Filters & Live Download Preview.
-"""
+"""views/client_inspector.py - Search every client and export filtered lists."""
 import datetime
+import io
+
 import pandas as pd
 import streamlit as st
 
+from config.settings import EXPORT_ROLES, LEAD_ADDER_ROLES
+from components.kpi_cards import page_title, render_kpi_cards
+from utils.time_utils import today_ist
+
+FRONT_COLS = ["client_id", "client_name", "company_name", "phone_number", "product", "qty", "city",
+              "source", "final_status", "quotation_status", "priority", "leads_handled_by",
+              "assigned_salesperson", "claimed_qs_name", "ingested_at"]
+HIDDEN_COLS = {"product_id", "handled_by_lge_id", "assigned_sam_id", "claimed_qs_id", "followup_owner_id"}
+
+
 def render_client_inspector(db_adapter, current_user):
-    st.markdown("<h2 style='color:#0E2C68; font-weight:800;'>🔍 Client 360-Degree Inspector & Exporter</h2>", unsafe_allow_html=True)
-
-    df_leads = db_adapter.fetch_all("leads_master")
-    df_quotes = db_adapter.fetch_all("quotations_master")
+    if current_user["role"] == "SAM":
+        from views.sam_clients import render_sam_clients
+        render_sam_clients(db_adapter, current_user)
+        return
+    page_title("Client inspector", "Search every client, filter, and export.")
+    df = db_adapter.fetch_all("leads_master")
     df_emp = db_adapter.fetch_all("employees")
-
-    if df_leads.empty:
-        st.info("No client records currently available in master database.")
+    if df.empty:
+        st.info("No clients yet.")
         return
 
-    if "client_id" in df_leads.columns:
-        df_leads["BID_ID"] = df_leads["client_id"]
-        df_leads["SID"] = "SID-" + df_leads["lead_id"].astype(str).str.zfill(4)
+    search = st.text_input("Search", placeholder="Client ID, name, company or phone").strip().lower()
 
-    st.markdown("##### 🔎 Multi-Attribute Search & Advanced Handled-By Filters")
-
-    # Search query
-    search_query = st.text_input(
-        "🔍 Search Client (by BID/Client ID, SID, Name, or Company):",
-        placeholder="e.g. BID-Oct-26-001, SID-0005, Omprakash, or Blue Cold"
-    ).strip().lower()
-
-    # Filter columns
-    f1, f2, f3, f4 = st.columns(4)
-    
+    f1, f2, f3, f4, f5 = st.columns(5)
     with f1:
-        source_opts = ["All Sources"] + list(df_leads["source"].dropna().unique()) if "source" in df_leads.columns else ["All Sources"]
-        selected_source = st.selectbox("Filter Source:", source_opts)
-    
+        sources = st.multiselect("Source", sorted(df["source"].dropna().unique()), placeholder="All sources")
     with f2:
-        status_opts = ["All Statuses"] + list(df_leads["quotation_status"].dropna().unique()) if "quotation_status" in df_leads.columns else ["All Statuses"]
-        selected_status = st.selectbox("Filter Quotation Status:", status_opts)
-    
+        stage = st.selectbox("Stage", ["All"] + sorted(df["final_status"].dropna().unique()))
     with f3:
-        lge_opts = ["All Lead Executives"] + list(df_emp[df_emp["role"] == "LGE"]["full_name"].unique()) if not df_emp.empty else ["All Lead Executives"]
-        selected_lge = st.selectbox("Handled By (LGE):", lge_opts)
-
+        q_status = st.selectbox("Quotation", ["All"] + sorted(df["quotation_status"].dropna().unique()))
     with f4:
-        sam_opts = ["All Salespersons"] + list(df_emp[df_emp["role"] == "SAM"]["full_name"].unique()) if not df_emp.empty else ["All Salespersons"]
-        selected_sam = st.selectbox("Assigned SAM:", sam_opts)
+        adders = df_emp[df_emp["role"].isin(LEAD_ADDER_ROLES)] if not df_emp.empty else df_emp
+        adder_names = sorted(set(adders["full_name"]) | set(df["leads_handled_by"].dropna()))
+        role_of = dict(zip(df_emp["full_name"], df_emp["role"])) if not df_emp.empty else {}
+        lge_label = st.selectbox("Added by", ["All"] + [f"{n} ({role_of.get(n, '—')})" for n in adder_names])
+        lge = "All" if lge_label == "All" else lge_label.rsplit(" (", 1)[0]
+    with f5:
+        sam = st.selectbox("Salesperson", ["All"] + sorted(df["assigned_salesperson"].dropna().unique()))
 
-    # Date Range Filter
-    c_date1, c_date2 = st.columns(2)
-    with c_date1:
-        start_date = st.date_input("From Date:", value=datetime.date(2026, 10, 1))
-    with c_date2:
-        end_date = st.date_input("To Date:", value=datetime.date(2026, 10, 31))
+    today = today_ist()
+    d1, d2 = st.columns(2)
+    with d1:
+        start = st.date_input("From", value=today.replace(day=1))
+    with d2:
+        end = st.date_input("To", value=today)
 
-    filtered_df = df_leads.copy()
+    out = df.copy()
+    if search:
+        hay = (out["client_id"].astype(str) + " " + out["client_name"].astype(str) + " "
+               + out["company_name"].fillna("").astype(str) + " " + out["phone_number"].astype(str)).str.lower()
+        out = out[hay.str.contains(search, regex=False)]
+    if sources:
+        out = out[out["source"].isin(sources)]
+    for col, val in [("final_status", stage), ("quotation_status", q_status),
+                     ("leads_handled_by", lge), ("assigned_salesperson", sam)]:
+        if val != "All":
+            out = out[out[col] == val]
+    if not search:      # a search looks through all dates, so an older client is still found
+        dates = pd.to_datetime(out["ingestion_date"], errors="coerce").dt.date
+        out = out[(dates >= start) & (dates <= end)]
 
-    # Apply Search Filter
-    if search_query:
-        filtered_df = filtered_df[
-            filtered_df["BID_ID"].astype(str).str.lower().str.contains(search_query, na=False) |
-            filtered_df["SID"].astype(str).str.lower().str.contains(search_query, na=False) |
-            filtered_df["client_name"].astype(str).str.lower().str.contains(search_query, na=False) |
-            filtered_df["company_name"].astype(str).str.lower().str.contains(search_query, na=False)
-        ]
+    cols = [c for c in FRONT_COLS if c in out.columns] + \
+           [c for c in out.columns if c not in FRONT_COLS and c not in HIDDEN_COLS]
+    out = out[cols]
 
-    # Apply Dropdown Filters
-    if selected_source != "All Sources" and "source" in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df["source"] == selected_source]
+    render_kpi_cards([
+        {"label": "Matching clients", "value": len(out), "icon": "🔎", "tone": "blue"},
+        {"label": "Open", "value": int((~out["final_status"].isin(["Done", "Cancled"])).sum()) if len(out) else 0,
+         "icon": "🟡", "tone": "amber"},
+        {"label": "Done", "value": int((out["final_status"] == "Done").sum()) if len(out) else 0, "icon": "🏆", "tone": "green"},
+        {"label": "Cancled", "value": int((out["final_status"] == "Cancled").sum()) if len(out) else 0, "icon": "✖️", "tone": "red"},
+    ])
+    if search and 0 < len(out) <= 8:
+        from components.client_card import render_client_card
+        st.markdown("##### Client details")
+        quotes, logs, orders = (db_adapter.fetch_all("quotations_master"), db_adapter.fetch_all("followup_logs"),
+                                db_adapter.fetch_all("orders"))
+        full = df.set_index("client_id")
+        for cid in out["client_id"]:
+            render_client_card(full.loc[cid].to_dict() | {"client_id": cid}, quotes, logs, orders, key=f"ci_{cid}")
+        st.markdown("##### As a table")
+    elif search and len(out) > 8:
+        st.caption("Narrow the search to 8 or fewer clients to see them as detailed cards.")
+    elif not search:
+        st.caption("Tip: search a client ID, name, company or phone to see a detailed client card.")
+    st.dataframe(out, width="stretch", hide_index=True)
 
-    if selected_status != "All Statuses" and "quotation_status" in filtered_df.columns:
-        filtered_df = filtered_df[filtered_df["quotation_status"] == selected_status]
+    if current_user["role"] not in EXPORT_ROLES:
+        st.caption("Downloads are limited to administrators.")
+        return
 
-    if "ingestion_date" in filtered_df.columns:
-        filtered_df["ingestion_date_dt"] = pd.to_datetime(filtered_df["ingestion_date"], errors="coerce").dt.date
-        filtered_df = filtered_df[
-            (filtered_df["ingestion_date_dt"] >= start_date) & 
-            (filtered_df["ingestion_date_dt"] <= end_date)
-        ]
-        filtered_df = filtered_df.drop(columns=["ingestion_date_dt"])
-
-    st.markdown("---")
-    st.markdown(f"###### 📊 Displaying `{len(filtered_df)}` Matching Client Record(s)")
-
-    front_cols = ["BID_ID", "SID", "client_name", "company_name", "product", "qty", "city", "source", "quotation_status"]
-    other_cols = [c for c in filtered_df.columns if c not in front_cols]
-    display_cols = [c for c in front_cols if c in filtered_df.columns] + other_cols
-
-    display_df = filtered_df[display_cols]
-    st.dataframe(display_df, width="stretch", hide_index=True)
-
-    st.markdown("---")
-    st.markdown("##### 📥 Export Filtered Client Report (Live Data Preview)")
-    
-    exp_col1, exp_col2 = st.columns(2)
-    with exp_col1:
-        export_columns = st.multiselect(
-            "Select Columns to Include in Download Sheet:",
-            options=list(display_df.columns),
-            default=display_cols[:9]
-        )
-
-    export_df = display_df[export_columns] if export_columns else display_df
-
-    st.markdown("###### 👁️ Real-time Export Preview Box (Data to be Downloaded)")
-    st.dataframe(export_df, width="stretch", hide_index=True)
-
-    csv_data = export_df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        label="📥 Download Filtered Client Sheet (CSV)",
-        data=csv_data,
-        file_name=f"client_inspector_report_{start_date}_to_{end_date}.csv",
-        mime="text/csv",
-        width="stretch"
-    )
+    st.markdown("##### Export")
+    chosen = st.multiselect("Columns", list(out.columns), default=[c for c in FRONT_COLS if c in out.columns][:10])
+    export = out[chosen] if chosen else out
+    name = f"clients_{start}_to_{end}"
+    e1, e2 = st.columns(2)
+    with e1:
+        if st.download_button("Download CSV", export.to_csv(index=False).encode("utf-8"),
+                              file_name=f"{name}.csv", mime="text/csv", width="stretch"):
+            db_adapter.log_event("EXPORT", "leads_master", None, None, {"rows": len(export), "format": "csv"})
+    with e2:
+        buf = io.BytesIO()
+        export.to_excel(buf, index=False, sheet_name="Clients")
+        if st.download_button("Download Excel", buf.getvalue(), file_name=f"{name}.xlsx",
+                              mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                              width="stretch"):
+            db_adapter.log_event("EXPORT", "leads_master", None, None, {"rows": len(export), "format": "xlsx"})

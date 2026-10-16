@@ -1,330 +1,465 @@
-"""
-views/quotation_portal.py - Quotation Specialist Control Desk.
-"""
+"""views/quotation_portal.py - Quotation desk: inbound queue, claiming, quotation entry, follow-ups."""
 import datetime
+import html
+
 import pandas as pd
 import streamlit as st
-from config.settings import TEAM_MEMBERS, IST
+
+from config.settings import APPROVER_ROLES, DISCOUNT_TYPES, MAX_REVISIONS, QUOTE_APPROVAL, QUOTE_COMPANIES
+from components.follow_up_cards import render_time_slot_workday_queue
+from components.contact import contact_links
+from components.time_picker import fmt_12h, time_12h
+from utils.queues import call_queue
+from components.kpi_cards import page_title, render_kpi_cards
+from utils.id_generator import generate_quotation_number
+from utils.metrics import inr, latest_quotes, open_leads
+from utils.time_utils import now_ist, now_str, today_ist
 
 
-def get_current_ist_time():
-    return datetime.datetime.now(IST)
+# ---------------------------------------------------------------- helpers
+def _sla_badge(row, today):
+    due = str(row.get("sla_due_date") or "")
+    if due and due < str(today):
+        return "<span style='background:#FEE2E2; color:#B91C1C; padding:5px 14px; border-radius:20px; font-weight:800; font-size:12px;'>SLA missed · was due " + html.escape(due) + "</span>"
+    if due == str(today):
+        return "<span style='background:#E0F2FE; color:#0284C7; padding:5px 14px; border-radius:20px; font-weight:800; font-size:12px;'>Due today</span>"
+    return "<span style='background:#FEF3C7; color:#B45309; padding:5px 14px; border-radius:20px; font-weight:800; font-size:12px;'>Overnight · due " + html.escape(due) + "</span>"
 
 
+def _lead_card(row, right_html=""):
+    prio = ("<span style='background:#FDE7EA; color:#BE123C; padding:4px 12px; border-radius:20px; font-weight:800; font-size:12px; margin-right:6px;'>High priority</span>"
+            if row.get("priority") == "High" else "")
+    st.markdown(f"""
+    <div class='saas-card'>
+        <div style='display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;'>
+            <span style='font-weight:800; color:#0E2C68; font-size:16px;'>{html.escape(str(row['client_name']))} · {html.escape(str(row.get('company_name') or ''))} ({html.escape(str(row['client_id']))})</span>
+            <span>{prio}{right_html}</span>
+        </div>
+        <div style='margin-top:6px; color:#475569; font-size:13.5px;'>
+            <b>Product:</b> {html.escape(str(row['product']))} (Qty {row['qty']}) &nbsp;|&nbsp;
+            <b>SAM:</b> {html.escape(str(row.get('assigned_salesperson') or '—'))} &nbsp;|&nbsp;
+            <b>Received:</b> {html.escape(str(row.get('ingested_at') or '')[:16])} &nbsp;|&nbsp;
+            <b>Source:</b> {html.escape(str(row.get('source') or ''))}
+        </div>
+        {contact_links(row.get('phone_number'), row.get('email'), str(row.get('client_name') or ''))}
+    </div>""", unsafe_allow_html=True)
+
+
+def revision_table(history: pd.DataFrame) -> pd.DataFrame:
+    """Readable revision history: list price, discount and final price per revision."""
+    h = history.sort_values("revision_no")
+    nets = h["qut_amount"].astype(float).tolist()
+    prev_change = ["—"] + [f"{(b - a) / a * 100:+.1f}%" if a else "—" for a, b in zip(nets, nets[1:])]
+    clean = lambda v: "—" if v is None or str(v) in ("None", "nan", "") else v
+    return pd.DataFrame({
+        "Client ID": h["client_id"].values,
+        "Revision": h["quotation_ref"].values,
+        "List price": h["gross_amount"].map(inr).values,
+        "Discount": [f"{inr(a)} ({p:.1f}%)" if a else "—"
+                     for a, p in zip(h["discount_amount"].astype(float), h["discount_percent"].astype(float))],
+        "Final price": h["qut_amount"].map(inr).values,
+        "Change vs previous": prev_change,
+        "Status": h["quotation_status"].values,
+        "Approved / rejected by": h["approved_by"].map(clean).values,
+        "Shared by": h["quotation_shared_by"].map(clean).values,
+        "Reason": h["revision_reason"].map(clean).values,
+        "Created": h["created_at"].astype(str).str[:16].values,
+    })
+
+
+def _sort_queue(df):
+    if df.empty:
+        return df
+    df = df.copy()
+    df["_p"] = (df["priority"] != "High").astype(int)
+    return df.sort_values(["_p", "sla_due_date", "ingested_at"]).drop(columns="_p")
+
+
+# ---------------------------------------------------------------- 1. dashboard
 def render_qs_performance_dashboard(db_adapter, current_user):
-    st.markdown("<h2 style='color:#0E2C68; font-weight:800;'>📊 Quotation Control & Inbound Desk</h2>", unsafe_allow_html=True)
-    qs_name = current_user.get("name") or "Quotation Specialist"
-    qs_id = current_user.get("employee_id", "EMP-102")
+    page_title("Quotation desk", "Your tickets, the claim queue and today's dispatch progress.")
+    qs_id = current_user["employee_id"]
+    today = today_ist()
 
     df_leads = db_adapter.fetch_all("leads_master")
     df_quotes = db_adapter.fetch_all("quotations_master")
-
-    now_ist = get_current_ist_time()
-    today_dt = now_ist.date()
-    yesterday_dt = today_dt - datetime.timedelta(days=1)
-    
-    today_str = str(today_dt)
-    yesterday_str = str(yesterday_dt)
-
-    # Filter to last 2 days of inbound leads
-    recent_leads = pd.DataFrame()
-    if not df_leads.empty and "ingestion_date" in df_leads.columns:
-        recent_leads = df_leads[df_leads["ingestion_date"].astype(str).isin([today_str, yesterday_str])]
-
-    # Calculate Personal vs Team Quotation Counters
-    team_total_today = len(recent_leads)
-    team_dispatched_today = len(recent_leads[recent_leads["quotation_status"] == "Sent"])
-    team_remaining_today = team_total_today - team_dispatched_today
-
-    my_assigned_leads = recent_leads[(recent_leads["claimed_qs_id"] == qs_id) & (recent_leads["quotation_status"] != "Sent")]
-    my_pending_count = len(my_assigned_leads)
-
-    st.markdown("##### 📊 Daily Operational Dashboard")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.markdown(f"""
-        <div class='saas-card' style='text-align:center; border: 2px solid #0284C7;'>
-            <h3 style='color:#0284C7; margin:0;'>{my_pending_count}</h3>
-            <p style='margin:0; font-weight:800; color:#0E2C68;'>{qs_name}'s Assigned Quotes</p>
-        </div>
-        """, unsafe_allow_html=True)
-    with c2:
-        st.markdown(f"""
-        <div class='saas-card' style='text-align:center;'>
-            <h3 style='color:#184B9C; margin:0;'>{team_remaining_today} / {team_total_today}</h3>
-            <p style='margin:0; font-weight:700;'>Team Quotes Left Today</p>
-        </div>
-        """, unsafe_allow_html=True)
-    with c3:
-        approved_q = len(df_quotes[df_quotes["quotation_status"] == "Approved"]) if not df_quotes.empty else 0
-        st.markdown(f"""
-        <div class='saas-card' style='text-align:center;'>
-            <h3 style='color:#00A859; margin:0;'>{approved_q}</h3>
-            <p style='margin:0; font-weight:700;'>Approved Quotes</p>
-        </div>
-        """, unsafe_allow_html=True)
-    with c4:
-        rejected_q = len(df_quotes[df_quotes["quotation_status"] == "Rejected"]) if not df_quotes.empty else 0
-        st.markdown(f"""
-        <div class='saas-card' style='text-align:center;'>
-            <h3 style='color:#E11D48; margin:0;'>{rejected_q}</h3>
-            <p style='margin:0; font-weight:700;'>Rejected Quotes</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # 1. Directly Assigned Leads Section
-    st.markdown(f"##### 🎯 Leads Directly Assigned To {qs_name}")
-    if not my_assigned_leads.empty:
-        for idx, row in my_assigned_leads.iterrows():
-            cid = row.get("client_id", "N/A")
-            cname = row.get("client_name", "N/A")
-            comp = row.get("company_name", "N/A")
-            prod = row.get("product", "N/A")
-            
-            st.markdown(f"""
-            <div class='saas-card' style='border-left: 6px solid #00A859;'>
-                <div style='display:flex; justify-content:space-between; align-items:center;'>
-                    <span style='font-weight:800; color:#0E2C68; font-size:16px;'>👤 {cname} | {comp} ({cid})</span>
-                    <span style='background:#E0F2FE; color:#0369A1; padding:4px 14px; border-radius:20px; font-weight:800; font-size:12px;'>DIRECTLY ASSIGNED TO YOU</span>
-                </div>
-                <div style='margin-top:6px; color:#475569; font-size:13.5px;'>
-                    📦 <b>Product:</b> {prod} (Qty: {row.get('qty', 1)}) &nbsp;|&nbsp; 👔 <b>SAM:</b> {row.get('assigned_salesperson', 'N/A')}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.info(f"No direct lead assignments currently pending for {qs_name}.")
-
-    # 2. General Inbound Unassigned Leads (Excludes Claimed/Accepted Leads)
-    st.markdown("##### 🔔 Inbound Unassigned Queue (Last 2 Days)")
-    unassigned_queue = recent_leads[(recent_leads["claimed_qs_id"] == "Unassigned") & (recent_leads["quotation_status"] != "Sent")]
-
-    if not unassigned_queue.empty:
-        cutoff_today = now_ist.replace(hour=17, minute=30, second=0, microsecond=0)
-        for idx, row in unassigned_queue.iterrows():
-            cid = row.get("client_id", "N/A")
-            cname = row.get("client_name", "N/A")
-            comp = row.get("company_name", "N/A")
-            prod = row.get("product", "N/A")
-
-            is_after_cutoff = now_ist > cutoff_today
-            if not is_after_cutoff:
-                badge_html = "<span style='background:#E0F2FE; color:#0284C7; padding:5px 14px; border-radius:20px; font-weight:800; font-size:12px;'>📋 TODAY'S TASK: SAME DAY DISPATCH SCHEDULED</span>"
-            else:
-                badge_html = "<span style='background:#FEF3C7; color:#D97706; padding:5px 14px; border-radius:20px; font-weight:800; font-size:12px;'>📅 OVERNIGHT TASK: NEXT DAY DISPATCH SCHEDULED</span>"
-
-            st.markdown(f"""
-            <div class='saas-card'>
-                <div style='display:flex; justify-content:space-between; align-items:center;'>
-                    <span style='font-weight:800; color:#0E2C68; font-size:16px;'>👤 {cname} | {comp} ({cid})</span>
-                    {badge_html}
-                </div>
-                <div style='margin-top:8px; color:#475569; font-size:13.5px;'>
-                    📦 <b>Product:</b> {prod} (Qty: {row.get('qty', 1)}) &nbsp;|&nbsp; 👔 <b>Assigned SAM:</b> {row.get('assigned_salesperson', 'N/A')}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.success("🎉 All inbound leads for the last 2 days have been claimed or dispatched!")
-
-
-def render_qs_generator_and_claim(db_adapter, current_user):
-    st.markdown("<h2 style='color:#0E2C68; font-weight:800;'>📄 Quotation Generator & Ticket Claiming</h2>", unsafe_allow_html=True)
-    qs_id = current_user.get("employee_id", "EMP-102")
-    qs_name = current_user.get("name") or "Quotation Specialist"
-
-    df_leads = db_adapter.fetch_all("leads_master")
-    df_quotes = db_adapter.fetch_all("quotations_master")
-
-    if "active_claimed_lead_id" not in st.session_state:
-        st.session_state["active_claimed_lead_id"] = None
-
-    unassigned = df_leads[df_leads["claimed_qs_id"] == "Unassigned"] if not df_leads.empty else pd.DataFrame()
-
-    if st.session_state["active_claimed_lead_id"] is None:
-        st.markdown("##### 🔔 Available Unassigned Lead Tickets")
-        if not unassigned.empty:
-            for idx, row in unassigned.iterrows():
-                cid = row.get("client_id")
-                cname = row.get("client_name")
-                comp = row.get("company_name")
-                prod = row.get("product")
-                lead_id = row.get("lead_id")
-
-                st.markdown(f"""
-                <div class='saas-card'>
-                    <div style='display:flex; justify-content:space-between; align-items:center;'>
-                        <span style='font-weight:800; color:#184B9C; font-size:16px;'>👤 {cname} | {comp} ({cid})</span>
-                        <span style='background:rgba(24, 75, 156, 0.1); color:#184B9C; padding:4px 12px; border-radius:20px; font-weight:700;'>Unassigned Ticket</span>
-                    </div>
-                    <div style='margin-top:6px; color:#475569; font-size:13.5px;'>
-                        📦 <b>Product:</b> {prod} (Qty: {row.get('qty', 1)})
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                if st.button(f"🔒 Claim & Accept Ticket {cid}", key=f"claim_{lead_id}"):
-                    db_adapter.update_row("leads_master", "lead_id", str(lead_id), {"claimed_qs_id": qs_id, "quotation_status": "Under Process"})
-                    st.session_state["active_claimed_lead_id"] = lead_id
-                    st.toast(f"✅ Ticket {cid} accepted! Quotation Form loaded below.", icon="🎉")
-                    st.rerun()
-        else:
-            st.info("🎉 No pending unassigned leads in queue.")
-
-    if st.session_state["active_claimed_lead_id"] is not None:
-        active_id = st.session_state["active_claimed_lead_id"]
-        lead_match = df_leads[df_leads["lead_id"] == active_id]
-
-        if not lead_match.empty:
-            lead_row = lead_match.iloc[0]
-            st.markdown("---")
-            st.markdown(f"### 📝 Quotation Entry Form for Accepted Lead: `{lead_row.get('client_id')}`")
-            _render_quotation_form_body(db_adapter, lead_row, df_quotes, qs_id, qs_name, from_claim_tab=True)
-
-
-def render_qs_detailed_form_entry(db_adapter, current_user):
-    st.markdown("<h2 style='color:#0E2C68; font-weight:800;'>📝 Detailed Quotation Form Entry</h2>", unsafe_allow_html=True)
-    qs_id = current_user.get("employee_id", "EMP-102")
-    qs_name = current_user.get("name") or "Quotation Specialist"
-
-    df_leads = db_adapter.fetch_all("leads_master")
-    df_quotes = db_adapter.fetch_all("quotations_master")
-
     if df_leads.empty:
-        st.info("No lead records available in system database.")
+        st.info("No leads yet. New leads appear here as soon as they are saved.")
         return
 
-    df_leads["lookup_label"] = df_leads["client_id"].astype(str) + " | " + df_leads["client_name"].astype(str) + " (" + df_leads["company_name"].fillna("N/A").astype(str) + ")"
-    lookup_map = dict(zip(df_leads["lookup_label"], df_leads["lead_id"]))
+    active = open_leads(df_leads)
+    not_sent = active[active["quotation_status"] != "Sent"]
+    mine = not_sent[not_sent["claimed_qs_id"] == qs_id]
+    unclaimed = not_sent[not_sent["claimed_qs_id"].isna()]
+    received_today = df_leads[df_leads["ingestion_date"] == str(today)]
+    sent_today = df_leads[df_leads["quote_sent_at"].astype(str).str[:10] == str(today)]
+    latest = latest_quotes(df_quotes)
+    under_review = latest[latest["quotation_status"] == "Under Review"] if not latest.empty else latest
 
-    selected_label = st.selectbox("🔍 Select Client (Search by Client ID, Bid ID, Name, or Company):", list(lookup_map.keys()))
-    selected_lead_id = lookup_map[selected_label]
+    sent_back_ids = set()
+    if not latest.empty:
+        sb = latest[(latest["revision_requested"] == 1) | (latest["quotation_status"] == "Rejected")]
+        sent_back_ids = set(sb["lead_id"])
+    late = mine[(mine["sla_due_date"].astype(str) < str(today)) & ~mine["lead_id"].isin(sent_back_ids)] if not mine.empty else mine
+    my_sent_today = sent_today[sent_today["claimed_qs_id"] == qs_id] if not sent_today.empty else sent_today
+    render_kpi_cards([
+        {"label": "My open tickets", "value": len(mine), "icon": "📝", "tone": "blue",
+         "sub": f"{len(late)} past SLA" if len(late) else "all within SLA"},
+        {"label": "Waiting to be claimed", "value": len(unclaimed), "icon": "📥", "tone": "amber",
+         "help": "Leads no specialist has claimed or been assigned yet"},
+        {"label": "I sent today", "value": len(my_sent_today), "icon": "📤", "tone": "green",
+         "sub": f"team: {len(sent_today)} of {len(received_today)} received today"},
+        {"label": "Quotes under review", "value": len(under_review), "icon": "🖊️", "tone": "teal",
+         "help": "Latest revision drafted but not yet approved"},
+        {"label": "Sent back to me", "value": len(mine[mine["lead_id"].isin(sent_back_ids)]) if not mine.empty else 0,
+         "icon": "↩️", "tone": "red", "help": "Salesperson asked for a revision"},
+    ])
 
-    lead_row = df_leads[df_leads["lead_id"] == selected_lead_id].iloc[0]
-    _render_quotation_form_body(db_adapter, lead_row, df_quotes, qs_id, qs_name, from_claim_tab=False)
+    st.markdown(f"##### My tickets — assigned to or claimed by {current_user['name']}")
+    if mine.empty:
+        st.info("You have no assigned or claimed tickets in progress.")
+    for _, row in _sort_queue(mine).iterrows():
+        badge = ("<span style='background:#FDE7EA; color:#BE123C; padding:5px 14px; border-radius:20px; font-weight:800; "
+                 "font-size:12px;'>↩️ Revision requested</span>") if row["lead_id"] in sent_back_ids else _sla_badge(row, today)
+        _lead_card(row, badge)
+
+    st.markdown("##### Waiting to be claimed")
+    if unclaimed.empty:
+        st.success("Every lead has been claimed.")
+    for _, row in _sort_queue(unclaimed).iterrows():
+        _lead_card(row, _sla_badge(row, today))
 
 
-def _render_quotation_form_body(db_adapter, lead_row, df_quotes, qs_id, qs_name, from_claim_tab=False):
-    now_dt = get_current_ist_time()
-    cid = str(lead_row.get("client_id", ""))
-    current_month_str = now_dt.strftime("%B")
+# ---------------------------------------------------------------- 2. claim + generate
+def render_qs_generator_and_claim(db_adapter, current_user):
+    st.markdown("<h2 style='color:#0E2C68; font-weight:800;'>Claim tickets & create quotations</h2>", unsafe_allow_html=True)
+    qs_id = current_user["employee_id"]
+    today = today_ist()
 
-    st.markdown("###### 🔄 Automatically Fetched Details from Lead Sheet")
+    df_leads = db_adapter.fetch_all("leads_master")
+    df_quotes = db_adapter.fetch_all("quotations_master")
+    if df_leads.empty:
+        st.info("No leads yet.")
+        return
+
+    not_sent = open_leads(df_leads)
+    not_sent = not_sent[not_sent["quotation_status"] != "Sent"]
+    mine = _sort_queue(not_sent[not_sent["claimed_qs_id"] == qs_id])
+    unclaimed = _sort_queue(not_sent[not_sent["claimed_qs_id"].isna()])
+
+    tab_mine, tab_open = st.tabs([f"My tickets ({len(mine)})", f"Unclaimed ({len(unclaimed)})"])
+
+    with tab_open:
+        if unclaimed.empty:
+            st.success("No unclaimed tickets.")
+        for _, row in unclaimed.iterrows():
+            _lead_card(row, _sla_badge(row, today))
+            if st.button(f"Claim {row['client_id']}", key=f"claim_{row['lead_id']}"):
+                if db_adapter.claim_lead(int(row["lead_id"]), qs_id):
+                    st.session_state["active_claimed_lead_id"] = int(row["lead_id"])
+                    st.toast(f"Claimed {row['client_id']}. Open 'My tickets' to create the quotation.", icon="✅")
+                else:
+                    st.warning(db_adapter.last_error)
+                st.rerun()
+
+    with tab_mine:
+        if mine.empty:
+            st.info("Claim a ticket from the Unclaimed tab to start a quotation.")
+            return
+        labels = dict(zip(mine["client_id"] + " · " + mine["client_name"], mine["lead_id"]))
+        active_id = st.session_state.get("active_claimed_lead_id")
+        ids = list(labels.values())
+        index = ids.index(active_id) if active_id in ids else 0
+        choice = st.selectbox("Ticket", list(labels.keys()), index=index)
+        lead_row = mine[mine["lead_id"] == labels[choice]].iloc[0]
+        _render_quotation_form_body(db_adapter, lead_row, df_quotes, current_user)
+
+
+# ---------------------------------------------------------------- 3. any lead
+def render_qs_detailed_form_entry(db_adapter, current_user):
+    st.markdown("<h2 style='color:#0E2C68; font-weight:800;'>Quotation entry & revisions</h2>", unsafe_allow_html=True)
+    df_leads = db_adapter.fetch_all("leads_master")
+    df_quotes = db_adapter.fetch_all("quotations_master")
+    if df_leads.empty:
+        st.info("No leads yet.")
+        return
+
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        search = st.text_input("Search client", placeholder="Type BID / client ID, client name, company or phone",
+                               key="qe_search").strip().lower()
+    with c2:
+        include_closed = st.toggle("Include Done & Cancled", value=False)
+    pool = df_leads if include_closed else open_leads(df_leads)
+    if search:
+        hay = (pool["client_id"].astype(str) + " " + pool["client_name"].astype(str) + " "
+               + pool["company_name"].fillna("").astype(str) + " " + pool["phone_number"].astype(str)).str.lower()
+        pool = pool[hay.str.contains(search, regex=False)]
+    if pool.empty:
+        st.info("No client matches that search. Try part of the ID (e.g. 004), the name or the company.")
+        return
+    labels = (pool["client_id"].astype(str) + " · " + pool["client_name"].astype(str) + " ("
+              + pool["company_name"].fillna("—").astype(str) + ")")
+    lookup = dict(zip(labels, pool["lead_id"]))
+    st.caption(f"{len(lookup)} match(es)")
+    choice = st.selectbox("Client", list(lookup.keys()))
+    lead_row = pool[pool["lead_id"] == lookup[choice]].iloc[0]
+    _render_quotation_form_body(db_adapter, lead_row, df_quotes, current_user)
+
+
+# ---------------------------------------------------------------- shared form
+def _render_quotation_form_body(db_adapter, lead_row, df_quotes, current_user):
+    lead_id = int(lead_row["lead_id"])
+    cid = str(lead_row["client_id"])
+    now = now_ist()
+
+    df_emp = db_adapter.fetch_all("employees")
+    active_emp = df_emp[df_emp["is_active"] == 1] if not df_emp.empty else df_emp
+    approvers = active_emp[active_emp["role"].isin(APPROVER_ROLES)]
+    approver_map = dict(zip(approvers["full_name"] + " (" + approvers["role"] + ")", approvers["employee_id"]))
+    sharer_map = dict(zip(active_emp["full_name"] + " (" + active_emp["role"] + ")", active_emp["employee_id"]))
+
+    st.markdown("###### Lead details")
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.text_input("Client ID / Bid ID", value=cid, disabled=True)
-        st.text_input("Date Stamp", value=str(lead_row.get("ingestion_date", "")), disabled=True)
-        st.text_input("Client Name", value=str(lead_row.get("client_name", "")), disabled=True)
-        st.text_input("Company Name", value=str(lead_row.get("company_name", "")), disabled=True)
+        st.text_input("Client ID", value=cid, disabled=True, key=f"ro_cid_{lead_id}")
+        st.text_input("Client name", value=str(lead_row["client_name"]), disabled=True, key=f"ro_cn_{lead_id}")
+        st.text_input("Company", value=str(lead_row.get("company_name") or ""), disabled=True, key=f"ro_co_{lead_id}")
     with c2:
-        st.text_input("Customer Contact Number", value=str(lead_row.get("phone_number", "")), disabled=True)
-        st.text_input("Product", value=str(lead_row.get("product", "")), disabled=True)
-        st.number_input("Quantity", value=int(lead_row.get("qty", 1)), disabled=True)
-        st.text_input("City", value=str(lead_row.get("city", "")), disabled=True)
+        st.text_input("Phone", value=str(lead_row.get("phone_number") or ""), disabled=True, key=f"ro_ph_{lead_id}")
+        st.text_input("Product", value=f"{lead_row['product']} × {lead_row['qty']}", disabled=True, key=f"ro_pr_{lead_id}")
+        st.text_input("City", value=str(lead_row.get("city") or ""), disabled=True, key=f"ro_ci_{lead_id}")
     with c3:
-        st.text_input("Source", value=str(lead_row.get("source", "")), disabled=True)
-        st.text_input("Assigned Salesperson", value=str(lead_row.get("assigned_salesperson", "")), disabled=True)
+        st.text_input("Received", value=str(lead_row.get("ingested_at") or "")[:16], disabled=True, key=f"ro_rc_{lead_id}")
+        st.text_input("Salesperson", value=str(lead_row.get("assigned_salesperson") or ""), disabled=True, key=f"ro_sa_{lead_id}")
+        st.text_input("Stage / quote", value=f"{lead_row['final_status']} / {lead_row['quotation_status']}",
+                      disabled=True, key=f"ro_st_{lead_id}")
+    if lead_row.get("remarks"):
+        st.caption(f"Requirement: {lead_row['remarks']}")
 
-    st.markdown("---")
-    st.markdown("###### ✍️ Manual & Operational Quotation Inputs")
+    history = df_quotes[df_quotes["lead_id"] == lead_id].sort_values("revision_no") if not df_quotes.empty else pd.DataFrame()
+    latest = history.iloc[-1] if not history.empty else None
 
-    follow_req_key = f"fol_req_select_{lead_row.get('lead_id')}"
-    if follow_req_key not in st.session_state:
-        st.session_state[follow_req_key] = "Choose..."
+    if latest is not None:
+        st.markdown("###### Revision history")
+        st.dataframe(revision_table(history), width="stretch", hide_index=True)
 
-    revised_options = ["Choose...", "No", "Yes - R1", "Yes - R2", "Yes - R3", "Yes - R4", "Yes - R5", "Yes - R6", "Yes - R7"]
+        if int(latest.get("revision_requested") or 0) == 1 or (latest["quotation_status"] == "Rejected" and latest.get("review_note")):
+            st.markdown(f"""<div class='saas-card' style='border-left:4px solid #BE123C;'>
+                <b style='color:#BE123C;'>↩️ Sent back for revision</b> by {html.escape(str(latest.get('reviewed_by_name') or '—'))}
+                on {html.escape(str(latest.get('reviewed_at') or '')[:16])}<br>
+                <span style='color:#334155;'>“{html.escape(str(latest.get('review_note') or ''))}”</span></div>""",
+                        unsafe_allow_html=True)
+        if latest["quotation_status"] == "Under Review":
+            _render_approval_update(db_adapter, lead_row, latest, approver_map, current_user)
 
-    follow_req = st.selectbox("Follow Up Required *", ["Choose...", "Yes", "No"], key=follow_req_key)
+    # ---- new quotation or new revision
+    next_rev = 0 if latest is None else int(latest["revision_no"]) + 1
+    if next_rev > MAX_REVISIONS:
+        st.error(f"This quotation has reached R{MAX_REVISIONS}, the revision limit. "
+                 "Ask an admin to raise MAX_REVISIONS in settings if more are needed.")
+        return
 
-    if follow_req == "Yes":
-        st.markdown("###### ⏰ Schedule Next Follow-up Call Reminder")
-        f_col1, f_col2 = st.columns(2)
-        with f_col1:
-            next_f_date = st.date_input("Next Follow-up Date *", value=now_dt.date() + datetime.timedelta(days=3), key=f"date_pick_{lead_row.get('lead_id')}")
-        with f_col2:
-            next_f_time = st.time_input("Next Follow-up Time *", value=datetime.time(12, 0), key=f"time_pick_{lead_row.get('lead_id')}")
+    heading = "Create quotation" if latest is None else f"Create revision R{next_rev}"
+    st.markdown(f"###### {heading}")
+    if latest is None:
+        company = st.segmented_control("Quotation company", list(QUOTE_COMPANIES.keys()),
+                                       default=list(QUOTE_COMPANIES.keys())[0], key=f"qco_{lead_id}") \
+                  or list(QUOTE_COMPANIES.keys())[0]
+        default_number = generate_quotation_number(db_adapter, now.date(), company)
+    else:
+        company = str(latest["quotation_number"]).split("/")[0]
+        default_number = str(latest["quotation_number"])
+    prev_gross = 50000.0 if latest is None else float(latest.get("gross_amount") or latest["qut_amount"])
+    prev_net = None if latest is None else float(latest["qut_amount"])
+    r0_net = None if history.empty else float(history.iloc[0]["qut_amount"])
 
-    with st.form(f"quotation_entry_form_{lead_row.get('lead_id')}"):
+    st.markdown("**Price**")
+    p1, p2, p3 = st.columns([1.2, 1, 1])
+    with p1:
+        gross = st.number_input("List price before discount (₹) *", min_value=0.0, value=prev_gross,
+                                step=1000.0, key=f"gross_{lead_id}_{next_rev}")
+    with p2:
+        disc_type = st.radio("Discount as", DISCOUNT_TYPES, horizontal=True, key=f"dtype_{lead_id}_{next_rev}")
+    with p3:
+        if disc_type == DISCOUNT_TYPES[0]:
+            default_pct = float(latest.get("discount_percent") or 0) if latest is not None else 0.0
+            pct = st.number_input("Discount %", min_value=0.0, max_value=100.0, value=default_pct, step=0.5,
+                                  key=f"dpct_{lead_id}_{next_rev}")
+            disc_amt = round(gross * pct / 100, 2)
+        else:
+            default_amt = float(latest.get("discount_amount") or 0) if latest is not None else 0.0
+            disc_amt = st.number_input("Discount ₹", min_value=0.0, value=min(default_amt, gross), step=500.0,
+                                       key=f"damt_{lead_id}_{next_rev}")
+            pct = round(disc_amt / gross * 100, 2) if gross else 0.0
+    net = round(gross - disc_amt, 2)
+    compare = ""
+    if prev_net:
+        diff = net - prev_net
+        compare += f" · vs previous: {'+' if diff >= 0 else '−'}{inr(abs(diff))} ({diff / prev_net * 100:+.1f}%)"
+    if r0_net and next_rev > 1:
+        compare += f" · vs R0: {(net - r0_net) / r0_net * 100:+.1f}%"
+    st.markdown(f"<div class='saas-card' style='padding:12px 18px;'><b>{inr(gross)}</b> list − <b>{inr(disc_amt)}</b> "
+                f"discount ({pct:.2f}%) = <span style='color:#00A859; font-weight:800; font-size:18px;'>{inr(net)}</span> "
+                f"final price<span style='color:#64748B;'>{compare}</span></div>", unsafe_allow_html=True)
+    me_label = next((k for k, v in sharer_map.items() if v == current_user["employee_id"]), None)
+    sharer_keys = list(sharer_map.keys())
+
+    with st.form(f"quote_form_{lead_id}_{next_rev}"):
         m1, m2, m3 = st.columns(3)
         with m1:
-            q_num = st.text_input("Quotation Number *", value=f"SSAPL/2026-27/{len(df_quotes)+841}")
-            q_amount = st.number_input("Qut. Amount (INR) *", min_value=0.0, value=50000.0)
-            revised = st.selectbox("Revised *", revised_options, index=0)
-            q_status = st.selectbox("Quotation Status *", ["Choose...", "Approved", "Under Review", "Rejected"], index=0)
+            q_num = st.text_input("Quotation number *", value=default_number, disabled=latest is not None,
+                                  help="Revisions keep the original number.")
+            q_status = st.selectbox("Status *", ["Choose..."] + QUOTE_APPROVAL,
+                                    help="Under Review = drafted, not yet approved. Approved = approved and sent to the client.")
         with m2:
-            app_by = st.selectbox("Qut. Status Approved By *", ["Choose...", "Jitendra Sir", "Jeevan Sharma", "Sidharth Jain", "Deepak Sethiya"], index=0)
-            follow_status = st.selectbox("Follow Up Status *", ["Choose...", "Under Discussion", "Won", "Lost", "CallBack"], index=0)
-            drive_link = st.text_input("Link (Folder Link)", value="https://drive.google.com")
+            app_by = st.selectbox("Approved by (required if Approved)", ["—"] + list(approver_map.keys()))
+            shared_by = st.selectbox("Shared by *", sharer_keys,
+                                     index=sharer_keys.index(me_label) if me_label in sharer_keys else 0)
+            approved_date = st.date_input("Approved date", value=now.date())
         with m3:
-            q_shared_by = st.selectbox("Quotation Shared By *", ["Choose..."] + TEAM_MEMBERS, index=0)
-            approved_date = st.date_input("Approved Date", value=now_dt.date())
-            comp_name_1 = st.text_input("Company Name-1", value=str(lead_row.get("company_name", "")))
-            approved_month = st.text_input("Approved Month *", value=current_month_str)
+            drive_link = st.text_input("Folder link", placeholder="https://drive.google.com/...")
+            comp_name_1 = st.text_input("Quoting company", value=company, disabled=True)
+            requested = (latest is not None and str(latest.get("review_note") or "") not in ("", "None", "nan")
+                         and (int(latest.get("revision_requested") or 0) == 1 or latest["quotation_status"] == "Rejected"))
+            rev_reason = st.text_input("Reason for revision *" if latest is not None else "Notes",
+                                       value=f"Requested by {latest.get('reviewed_by_name')}: {latest.get('review_note')}" if requested else "",
+                                       placeholder="e.g. Client asked for 8% discount")
 
-        submit_q_btn = st.form_submit_button("💾 Save & Dispatch Quotation")
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            follow_req = st.selectbox("Follow-up required *", ["Yes", "No"])
+        with f2:
+            next_date = st.date_input("Next call date", value=now.date() + datetime.timedelta(days=3))
+        with f3:
+            next_time = time_12h("Next call time", key=f"qnt_{lead_id}_{next_rev}", default=datetime.time(12, 0))
 
-        if submit_q_btn:
-            if "Choose..." in [revised, q_status, follow_req, app_by, follow_status, q_shared_by]:
-                st.error("Please select valid options for all mandatory dropdown fields starting with 'Choose...'.")
-            else:
-                q_record = {
-                    "quotation_id": f"QUO-{len(df_quotes)+1:04d}",
-                    "lead_id": int(lead_row.get("lead_id")),
-                    "client_id": cid,
-                    "quotation_number": q_num,
-                    "revised": revised,
-                    "qut_amount": q_amount,
-                    "quotation_status": q_status,
-                    "follow_up_required": follow_req,
-                    "claimed_qs_id": qs_id,
-                    "approved_by_id": "EMP-106",
-                    "shared_by_id": qs_id,
-                    "folder_link": drive_link,
-                    "company_name_1": comp_name_1,
-                    "approved_date": str(approved_date),
-                    "approved_month": approved_month
-                }
-                db_adapter.insert_row("quotations_master", q_record)
-                db_adapter.update_row("leads_master", "lead_id", str(lead_row.get("lead_id")), {"quotation_status": "Sent", "claimed_qs_id": qs_id})
+        if st.form_submit_button("Save quotation"):
+            errors = []
+            if q_status == "Choose...":
+                errors.append("choose a status")
+            if gross <= 0:
+                errors.append("enter a list price above zero")
+            if disc_amt > gross:
+                errors.append("keep the discount below the list price")
+            if q_status == "Approved" and app_by == "—":
+                errors.append("choose who approved it")
+            if latest is not None and not rev_reason.strip():
+                errors.append("give the reason for this revision")
+            if latest is None and not q_num.strip():
+                errors.append("enter a quotation number")
+            if errors:
+                st.error("Please " + "; ".join(errors) + ".")
+                return
 
-                if follow_req == "Yes":
-                    sched_ts = f"{next_f_date} {next_f_time}"
-                    log_entry = {
-                        "lead_id": int(lead_row.get("lead_id")),
-                        "employee_id": qs_name,
-                        "followup_sequence_no": 1,
-                        "followup_status": follow_status,
-                        "scheduled_call_time": sched_ts,
-                        "notes": "Initial quotation dispatched. Follow-up scheduled."
-                    }
-                    db_adapter.insert_row("followup_logs", log_entry)
+            stamp = now_str()
+            quote_id = db_adapter.insert_row("quotations_master", {
+                "quotation_id": db_adapter.next_quotation_id(),
+                "lead_id": lead_id,
+                "client_id": cid,
+                "quotation_number": q_num.strip() if latest is None else str(latest["quotation_number"]),
+                "revision_no": next_rev,
+                "qut_amount": float(net),
+                "gross_amount": float(gross),
+                "discount_percent": float(pct),
+                "discount_amount": float(disc_amt),
+                "quotation_status": q_status,
+                "follow_up_required": follow_req,
+                "claimed_qs_id": lead_row.get("claimed_qs_id") or current_user["employee_id"],
+                "approved_by_id": approver_map.get(app_by),
+                "shared_by_id": sharer_map[shared_by],
+                "folder_link": drive_link.strip() or None,
+                "company_name_1": company,
+                "approved_date": str(approved_date) if q_status == "Approved" else None,
+                "approved_month": approved_date.strftime("%B %Y") if q_status == "Approved" else None,
+                "revision_reason": rev_reason.strip() or None,
+                "created_by": current_user["employee_id"],
+                "created_at": stamp,
+            })
+            if quote_id is None:
+                st.error(db_adapter.last_error)
+                return
 
-                if from_claim_tab:
-                    st.session_state["active_claimed_lead_id"] = None
+            if not _apply_quote_to_lead(db_adapter, lead_row, q_status, follow_req,
+                                        f"{next_date} {next_time.strftime('%H:%M:%S')}", current_user, stamp):
+                st.error(db_adapter.last_error)
+                return
 
-                st.toast(f"🎉 Quotation {q_num} dispatched successfully!", icon="✅")
+            st.session_state.pop("active_claimed_lead_id", None)
+            label = q_num if next_rev == 0 else f"{latest['quotation_number']} R{next_rev}"
+            st.toast(f"Quotation {label} saved as {q_status}.", icon="✅")
+            st.rerun()
+
+
+def _apply_quote_to_lead(db_adapter, lead_row, q_status, follow_req, sched_ts, current_user, stamp) -> bool:
+    """Moves the lead forward after a quotation is saved or approved."""
+    owner = lead_row.get("claimed_qs_id") or current_user["employee_id"]
+    updates = {"claimed_qs_id": owner, "updated_at": stamp}
+    if q_status == "Approved":
+        updates.update({
+            "quotation_status": "Sent",
+            "followup_owner_id": owner,
+            "next_followup_at": sched_ts if follow_req == "Yes" else None,
+        })
+        if not lead_row.get("quote_sent_at"):
+            updates["quote_sent_at"] = stamp
+        if lead_row.get("final_status") == "Pending":
+            updates["final_status"] = "In Discussion"
+    else:
+        updates["quotation_status"] = "Under Process"
+    if not lead_row.get("claimed_at"):
+        updates["claimed_at"] = stamp
+    return db_adapter.update_row("leads_master", "lead_id", int(lead_row["lead_id"]), updates)
+
+
+def _render_approval_update(db_adapter, lead_row, latest, approver_map, current_user):
+    """Record approval/rejection for the latest revision that is still under review."""
+    with st.expander(f"Record approval for {latest['quotation_ref']} (currently under review)", expanded=True):
+        with st.form(f"approve_{latest['quotation_id']}"):
+            a1, a2, a3 = st.columns(3)
+            with a1:
+                decision = st.selectbox("Decision", ["Approved", "Rejected"])
+            with a2:
+                approver = st.selectbox("Approved / rejected by", list(approver_map.keys()) or ["—"])
+            with a3:
+                next_date = st.date_input("Next call date", value=today_ist() + datetime.timedelta(days=3))
+                next_time = time_12h("Next call time", key=f"apt_{latest['quotation_id']}", default=datetime.time(12, 0))
+            if st.form_submit_button("Save decision"):
+                stamp = now_str()
+                ok = db_adapter.update_row("quotations_master", "quotation_id", latest["quotation_id"], {
+                    "quotation_status": decision,
+                    "approved_by_id": approver_map.get(approver),
+                    "approved_date": stamp[:10] if decision == "Approved" else None,
+                    "approved_month": now_ist().strftime("%B %Y") if decision == "Approved" else None,
+                })
+                if ok:
+                    ok = _apply_quote_to_lead(db_adapter, lead_row, decision, "Yes",
+                                              f"{next_date} {next_time.strftime('%H:%M:%S')}", current_user, stamp)
+                if not ok:
+                    st.error(db_adapter.last_error)
+                    return
+                st.toast(f"{latest['quotation_ref']} marked {decision}.", icon="✅")
                 st.rerun()
 
 
+# ---------------------------------------------------------------- 4. follow-up workday
 def render_qs_followup_workday(db_adapter, current_user):
-    st.markdown("<h2 style='color:#0E2C68; font-weight:800;'>⚡ Follow-up Queue & Workday</h2>", unsafe_allow_html=True)
-    qs_name = current_user.get("name") or "Quotation Specialist"
-    now_ist = get_current_ist_time()
-
+    page_title("Follow-up calls", "Log every call; the next call date keeps the list honest.")
     df_leads = db_adapter.fetch_all("leads_master")
+    df_quotes = db_adapter.fetch_all("quotations_master")
     df_logs = db_adapter.fetch_all("followup_logs")
 
-    if df_leads.empty:
-        st.info("No active follow-ups required.")
-        return
+    show_owner, owner = False, None
+    if current_user["role"] == "ADMIN":
+        df_emp = db_adapter.fetch_all("employees")
+        owners = dict(zip(df_emp["full_name"] + " (" + df_emp["employee_id"] + ")", df_emp["employee_id"]))
+        pick = st.selectbox("Whose calls", ["Everyone"] + list(owners.keys()))
+        owner = owners.get(pick)
+        show_owner = owner is None
+    elif current_user["role"] == "SAM":
+        st.caption("Calls for your own clients only.")
+        show_owner = True
+    queue = call_queue(df_leads, current_user, owner)
 
-    active_queue = df_leads[~df_leads["final_status"].astype(str).str.lower().isin(["done", "won", "cancled", "canceled", "lost"])]
-
-    if active_queue.empty:
-        st.info("🎉 All follow-up tasks completed! No active leads remaining.")
-        return
-
-    from components.follow_up_cards import render_time_slot_workday_queue
-    render_time_slot_workday_queue(db_adapter, active_queue, df_logs, qs_name, now_ist)
+    render_time_slot_workday_queue(db_adapter, queue, latest_quotes(df_quotes), df_logs,
+                                   current_user, now_ist().replace(tzinfo=None), show_owner)

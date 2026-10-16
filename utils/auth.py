@@ -1,84 +1,73 @@
 """
-utils/auth.py - Authentication Engine for Employees Relational Table
+utils/auth.py - Login against the employees table (hashed passwords only).
+
+There are no built-in fallback accounts. The first admin is created from
+secrets.toml ([bootstrap]) when the database is empty.
 """
+import time
+
 import streamlit as st
 
-# Emergency hardcoded fallback map to ensure immediate login
-DEFAULT_CREDENTIALS = {
-    "admin": {"password": "admin123", "role": "ADMIN", "name": "System Administrator", "email": "admin@sidharth.com", "employee_id": "EMP-108"},
-    "admin@sidharth.com": {"password": "admin123", "role": "ADMIN", "name": "System Administrator", "email": "admin@sidharth.com", "employee_id": "EMP-108"},
-    "albert": {"password": "albert123", "role": "LGE", "name": "Albert Singh", "email": "albert@sidharth.com", "employee_id": "EMP-101"},
-    "albert@sidharth.com": {"password": "albert123", "role": "LGE", "name": "Albert Singh", "email": "albert@sidharth.com", "employee_id": "EMP-101"},
-    "pooja": {"password": "pooja123", "role": "QS", "name": "Pooja", "email": "pooja@sidharth.com", "employee_id": "EMP-102"},
-    "pooja@sidharth.com": {"password": "pooja123", "role": "QS", "name": "Pooja", "email": "pooja@sidharth.com", "employee_id": "EMP-102"},
-    "anjali": {"password": "anjali123", "role": "QS", "name": "Anjali", "email": "anjali@sidharth.com", "employee_id": "EMP-103"},
-    "anjali@sidharth.com": {"password": "anjali123", "role": "QS", "name": "Anjali", "email": "anjali@sidharth.com", "employee_id": "EMP-103"},
-    "dolly": {"password": "dolly123", "role": "QS", "name": "Dolly", "email": "dolly@sidharth.com", "employee_id": "EMP-104"},
-    "dolly@sidharth.com": {"password": "dolly123", "role": "QS", "name": "Dolly", "email": "dolly@sidharth.com", "employee_id": "EMP-104"},
-    "jeevan": {"password": "jeevan123", "role": "SAM", "name": "Jeevan Sharma", "email": "jeevan@sidharth.com", "employee_id": "EMP-105"},
-    "jeevan@sidharth.com": {"password": "jeevan123", "role": "SAM", "name": "Jeevan Sharma", "email": "jeevan@sidharth.com", "employee_id": "EMP-105"},
-    "jitendra": {"password": "jitendra123", "role": "SAM", "name": "Jitendra Sharma", "email": "jitendra@sidharth.com", "employee_id": "EMP-106"},
-    "jitendra@sidharth.com": {"password": "jitendra123", "role": "SAM", "name": "Jitendra Sharma", "email": "jitendra@sidharth.com", "employee_id": "EMP-106"},
-    "deepak": {"password": "deepak123", "role": "SAM", "name": "Deepak Sethiya", "email": "deepak@sidharth.com", "employee_id": "EMP-107"},
-    "deepak@sidharth.com": {"password": "deepak123", "role": "SAM", "name": "Deepak Sethiya", "email": "deepak@sidharth.com", "employee_id": "EMP-107"},
-}
+from utils.security import verify_password
+
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_SECONDS = 300
 
 
 def init_session_auth():
-    if "authenticated" not in st.session_state:
-        st.session_state["authenticated"] = False
-        st.session_state["user"] = None
+    st.session_state.setdefault("authenticated", False)
+    st.session_state.setdefault("user", None)
+    st.session_state.setdefault("failed_logins", 0)
+    st.session_state.setdefault("locked_until", 0.0)
 
 
-def login_user(db_adapter, identifier: str, password: str) -> bool:
+def login_user(db_adapter, identifier: str, password: str):
+    """Returns (success, message)."""
+    if time.time() < st.session_state.get("locked_until", 0):
+        wait = int(st.session_state["locked_until"] - time.time()) // 60 + 1
+        return False, f"Too many failed attempts. Try again in {wait} minute(s)."
+
     if not identifier or not password:
-        return False
+        return False, "Enter your username or email and your password."
 
-    clean_id = str(identifier).strip().lower()
-    clean_pwd = str(password).strip()
+    record = db_adapter.get_login_record(identifier)
+    ok = bool(record) and int(record.get("is_active", 0)) == 1 and verify_password(password, record.get("password_hash", ""))
 
-    # 1. Fallback Registry Check
-    if clean_id in DEFAULT_CREDENTIALS:
-        account = DEFAULT_CREDENTIALS[clean_id]
-        if account["password"] == clean_pwd:
-            st.session_state["authenticated"] = True
-            st.session_state["user"] = {
-                "employee_id": account["employee_id"],
-                "name": account["name"],
-                "email": account["email"],
-                "role": account["role"],
-            }
-            return True
+    if not ok:
+        st.session_state["failed_logins"] += 1
+        db_adapter.set_actor(record.get("employee_id") if record else None)
+        db_adapter.log_event("LOGIN_FAILED", "employees", record.get("employee_id") if record else None,
+                             None, {"identifier": str(identifier)[:80]})
+        if st.session_state["failed_logins"] >= MAX_FAILED_ATTEMPTS:
+            st.session_state["locked_until"] = time.time() + LOCKOUT_SECONDS
+            st.session_state["failed_logins"] = 0
+        if record and int(record.get("is_active", 0)) != 1:
+            return False, "This account is deactivated. Ask an admin to reactivate it."
+        return False, "Username or password is incorrect."
 
-    # 2. Relational Employees Table Check
-    try:
-        df_emp = db_adapter.fetch_all("employees")
-        if df_emp is not None and not df_emp.empty:
-            for _, row in df_emp.iterrows():
-                e_id = str(row.get("employee_id", "")).strip().lower()
-                e_email = str(row.get("email", "")).strip().lower()
-                e_name = str(row.get("full_name", "")).strip().lower()
-                e_pwd = str(row.get("password", "")).strip()
-
-                if (clean_id in [e_id, e_email, e_name]) and clean_pwd == e_pwd:
-                    st.session_state["authenticated"] = True
-                    st.session_state["user"] = {
-                        "employee_id": row.get("employee_id", ""),
-                        "name": row.get("full_name", "User"),
-                        "email": row.get("email", ""),
-                        "role": str(row.get("role", "LGE")).upper(),
-                    }
-                    return True
-    except Exception as e:
-        st.error(f"Authentication DB Error: {e}")
-
-    return False
+    st.session_state["failed_logins"] = 0
+    st.session_state["authenticated"] = True
+    st.session_state["user"] = {
+        "employee_id": record["employee_id"],
+        "name": record["full_name"],
+        "email": record["email"],
+        "role": str(record["role"]).upper(),
+        "is_team_lead": int(record.get("is_team_lead") or 0) == 1,
+    }
+    db_adapter.set_actor(record["employee_id"])
+    db_adapter.log_event("LOGIN", "employees", record["employee_id"])
+    return True, "Signed in."
 
 
-def logout_user():
-    st.session_state["authenticated"] = False
-    st.session_state["user"] = None
+def logout_user(db_adapter=None):
+    user = st.session_state.get("user") or {}
+    if db_adapter is not None and user:
+        db_adapter.set_actor(user.get("employee_id"))
+        db_adapter.log_event("LOGOUT", "employees", user.get("employee_id"))
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    init_session_auth()
 
 
-def get_current_user() -> dict:
-    return st.session_state.get("user", {"employee_id": "EMP-101", "name": "Guest", "role": "LGE", "email": ""})
+def get_current_user():
+    return st.session_state.get("user")

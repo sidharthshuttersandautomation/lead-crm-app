@@ -1,219 +1,194 @@
 """
-components/follow_up_cards.py - Interactive Follow-up Workday Engine with Date & Time Slot Filtering.
+components/follow_up_cards.py - Follow-up call queue and the reusable call card
+(used on the Follow-up calls page and on Alerts).
 """
 import datetime
+import html
+
 import pandas as pd
 import streamlit as st
 
-TIME_SLOTS = [
-    "🌅 Morning (09:00 AM - 11:00 AM)",
-    "☀️ Midday (11:00 AM - 01:00 PM)",
-    "🌤️ Afternoon (01:00 PM - 04:00 PM)",
-    "🌆 Evening (04:00 PM - 06:00 PM)",
-    "🌙 Late Evening (After 06:00 PM)",
-]
+from components.cards import CSS as CARD_CSS, card_html, clean
+from components.contact import contact_links
+from components.time_picker import fmt_12h, time_12h
+from config.settings import CANCEL_CATEGORY_OPTIONS, CLOSED_STAGES, FOLLOWUP_OUTCOMES, TIME_SLOTS
+from utils.metrics import call_bucket, inr
+from utils.time_utils import now_ist, now_str, parse_ts, today_ist
 
-def get_time_slot_label(time_obj: datetime.time) -> str:
-    """Categorizes a time object into a designated operational time slot bucket."""
-    hour = time_obj.hour
-    if 9 <= hour < 11:
-        return "🌅 Morning (09:00 AM - 11:00 AM)"
-    elif 11 <= hour < 13:
-        return "☀️ Midday (11:00 AM - 01:00 PM)"
-    elif 13 <= hour < 16:
-        return "🌤️ Afternoon (01:00 PM - 04:00 PM)"
-    elif 16 <= hour < 18:
-        return "🌆 Evening (04:00 PM - 06:00 PM)"
-    elif hour >= 18:
-        return "🌙 Late Evening (After 06:00 PM)"
+MAX_CARDS = 50
+DATE_FILTERS = {"Today": "today", "Overdue": "overdue", "Upcoming": "upcoming",
+                "Not scheduled": "unscheduled", "All open": None}
+
+
+def slot_label(t: datetime.time) -> str:
+    for label, start, end in TIME_SLOTS:
+        if start <= t.hour < end:
+            return label
+    return TIME_SLOTS[-1][0]
+
+
+def call_counts(queue: pd.DataFrame) -> dict:
+    if queue is None or queue.empty:
+        return {"today": 0, "overdue": 0, "upcoming": 0, "unscheduled": 0}
+    vc = queue["next_followup_at"].map(call_bucket).value_counts()
+    return {k: int(vc.get(k, 0)) for k in ("today", "overdue", "upcoming", "unscheduled")}
+
+
+def render_time_slot_workday_queue(db_adapter, queue: pd.DataFrame, df_latest_quotes: pd.DataFrame,
+                                   df_logs: pd.DataFrame, current_user: dict, ist_now: datetime.datetime,
+                                   show_owner: bool = False):
+    from components.kpi_cards import render_kpi_cards
+    today = ist_now.date()
+    counts = call_counts(queue)
+    done_today = 0
+    if not df_logs.empty:
+        mine = df_logs if show_owner else df_logs[df_logs["employee_id"] == current_user["employee_id"]]
+        done_today = int((mine["logged_at"].astype(str).str[:10] == str(today)).sum())
+    render_kpi_cards([
+        {"label": "Overdue calls", "value": counts["overdue"], "icon": "⏰", "tone": "red",
+         "sub": "clear these first"},
+        {"label": "Due today", "value": counts["today"], "icon": "📅", "tone": "amber"},
+        {"label": "Calls logged today", "value": done_today, "icon": "✅", "tone": "green"},
+        {"label": "Upcoming", "value": counts["upcoming"], "icon": "🗓️", "tone": "blue"},
+        {"label": "Not scheduled", "value": counts["unscheduled"], "icon": "❔", "tone": "navy",
+         "help": "Open leads with no next call date"},
+    ])
+    st.caption(f"Now {ist_now.strftime('%d %b %Y, %I:%M %p')} IST · current slot: {slot_label(ist_now.time())}")
+
+    c_search, c_date = st.columns([1.3, 2])
+    with c_search:
+        search = st.text_input("Search", placeholder="Client ID, name, company or phone",
+                               key="fol_queue_search").strip().lower()
+    with c_date:
+        default = None if "fol_queue_date" in st.session_state else ("Overdue" if counts["overdue"] else "Today")
+        date_choice = st.segmented_control("Show calls", list(DATE_FILTERS.keys()), default=default,
+                                           key="fol_queue_date")
+    slot_choice = st.segmented_control("Time slot", ["All slots"] + [s[0] for s in TIME_SLOTS],
+                                       default="All slots", key="fol_queue_slot")
+
+    if queue.empty:
+        st.info("No open leads in your follow-up queue.")
+        return
+    df = queue.copy()
+    df["_bucket"] = df["next_followup_at"].map(lambda v: call_bucket(v, today))
+    df["_slot"] = df["next_followup_at"].map(lambda v: slot_label(parse_ts(v).time()) if parse_ts(v) else "")
+    if search:
+        hay = (df["client_id"].astype(str) + " " + df["client_name"].astype(str) + " "
+               + df["company_name"].fillna("").astype(str) + " " + df["phone_number"].astype(str)).str.lower()
+        df = df[hay.str.contains(search, regex=False)]
+    wanted = DATE_FILTERS.get(date_choice or "All open")
+    if wanted:
+        df = df[df["_bucket"] == wanted]
+    if slot_choice and slot_choice != "All slots":
+        df = df[df["_slot"] == slot_choice]
+    if df.empty:
+        st.success("Nothing matches these filters.")
+        return
+
+    df = sort_calls(df)
+    if len(df) > MAX_CARDS:
+        st.warning(f"Showing the first {MAX_CARDS} of {len(df)} calls. Narrow the filters to see the rest.")
+    for _, row in df.head(MAX_CARDS).iterrows():
+        render_follow_up_card(db_adapter, row, df_logs, df_latest_quotes, current_user, show_owner, "q")
+
+
+def sort_calls(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df["_prio"] = (df["priority"] != "High").astype(int)
+    df["_sort_ts"] = df["next_followup_at"].fillna("9999-12-31").astype(str)
+    return df.sort_values(["_prio", "_sort_ts"])
+
+
+def _badge(text, bg, fg):
+    return f"<span class='pill' style='background:{bg}; color:{fg};'>{html.escape(text)}</span>"
+
+
+def render_follow_up_card(db_adapter, row, df_logs: pd.DataFrame, df_latest_quotes: pd.DataFrame,
+                          current_user: dict, show_owner: bool = False, key_prefix: str = "q",
+                          expanded: bool = False):
+    lead_id = int(row["lead_id"])
+    logs = df_logs[df_logs["lead_id"] == lead_id] if not df_logs.empty else pd.DataFrame()
+    qrows = df_latest_quotes[df_latest_quotes["lead_id"] == lead_id] if not df_latest_quotes.empty else pd.DataFrame()
+    quote = qrows.iloc[0] if not qrows.empty else None
+
+    ts = parse_ts(row.get("next_followup_at"))
+    bucket = call_bucket(row.get("next_followup_at"))
+    if ts is None:
+        call_text, colors = "Not scheduled", ("#F1F5F9", "#475569")
     else:
-        return "🌅 Morning (09:00 AM - 11:00 AM)"
+        when = "Today" if bucket == "today" else ts.strftime("%d %b")
+        call_text = f"{when} @ {ts.strftime('%I:%M %p')}"
+        colors = ("#FDE7EA", "#BE123C") if bucket == "overdue" else ("#FEF3C7", "#B45309")
 
+    pills = [("High priority", "red")] if row.get("priority") == "High" else []
+    pills += [(f"📞 {call_text}", "red" if bucket == "overdue" else ("grey" if ts is None else "amber")),
+              (f"Follow-up #{len(logs) + 1}", "blue")]
+    last_note = (f"<b>Last note:</b> {html.escape(str(logs.iloc[-1]['notes']))} "
+                 f"<span style='color:#94A3B8;'>· {html.escape(str(logs.iloc[-1].get('employee_name') or ''))}, "
+                 f"{fmt_12h(logs.iloc[-1]['logged_at'])}</span>") if not logs.empty else "No calls logged yet."
+    fields = [("Stage", html.escape(str(row["final_status"]))),
+              ("Product", f"{html.escape(str(row['product']))} × {row['qty']}"),
+              ("Quotation", html.escape(str(quote["quotation_ref"])) if quote is not None else "Not sent yet"),
+              ("Final price", inr(quote["qut_amount"]) if quote is not None else "—"),
+              ("City", html.escape(clean(row.get("city"))))]
+    if show_owner:
+        fields.append(("Call owner", html.escape(clean(row.get("followup_owner_name"), "Unassigned"))))
+    st.markdown(CARD_CSS + card_html(
+        row["client_id"], row["client_name"], row.get("company_name"), pills=pills, fields=fields,
+        links=contact_links(row.get("phone_number"), row.get("email"), str(row.get("client_name") or "")),
+        note=last_note, accent="red" if bucket == "overdue" else "blue"), unsafe_allow_html=True)
 
-def render_time_slot_workday_queue(db_adapter, active_queue, df_logs, current_user_name, ist_now):
-    """Renders follow-up cards with search filtering, today's schedule logic, and time slot badges."""
-    
-    st.markdown("##### 🔍 Search & Date Filter Workstation")
-    
-    # 1. Multi-Attribute Search Bar (Client ID, Name, Company Name)
-    search_query = st.text_input(
-        "🔍 Search Follow-up Queue:",
-        placeholder="Type Client ID (e.g. BID-Oct-26-005), Client Name, or Company Name...",
-        key="fol_queue_search_bar"
-    ).strip().lower()
-
-    # 2. Date Filtering Tabs
-    date_filter = st.radio(
-        "Select Date Window:",
-        ["📅 Today's Scheduled Calls", "⚠️ Overdue Calls", "📆 Upcoming Calls", "📋 View All Active Queue"],
-        horizontal=True,
-        key="fol_queue_date_filter"
-    )
-
-    # 3. Time Slot Window Filter
-    current_slot = get_time_slot_label(ist_now.time())
-    st.info(f"🕒 **Current System Date & Time:** `{ist_now.strftime('%d %B %Y | %I:%M %p')}` | **Active Slot:** `{current_slot}`")
-
-    slot_filter = st.radio(
-        "Filter by Time Slot Window:",
-        ["🔥 All Slots Today", "🌅 Morning (9-11 AM)", "☀️ Midday (11 AM-1 PM)", "🌤️ Afternoon (1-4 PM)", "🌆 Evening (4-6 PM)", "🌙 Late Evening (> 6 PM)"],
-        horizontal=True,
-        key="fol_queue_slot_filter"
-    )
-
-    st.markdown("---")
-
-    today_date = ist_now.date()
-    rendered_count = 0
-
-    for idx, row in active_queue.iterrows():
-        lead_id = row.get("lead_id")
-        cid = str(row.get("client_id", "N/A"))
-        cname = str(row.get("client_name", "Client"))
-        comp = str(row.get("company_name", "N/A"))
-        addr = str(row.get("address", "N/A"))
-        cty = str(row.get("city", "N/A"))
-        prod = str(row.get("product", "Automation"))
-
-        # Search Query Filtering Logic
-        if search_query:
-            match_cid = search_query in cid.lower()
-            match_cname = search_query in cname.lower()
-            match_comp = search_query in comp.lower()
-            if not (match_cid or match_cname or match_comp):
-                continue
-
-        # Fetch past interaction logs
-        past_logs = df_logs[df_logs["lead_id"] == lead_id] if not df_logs.empty else pd.DataFrame()
-        log_count = len(past_logs) if not past_logs.empty else 1
-        history_remarks = list(past_logs["notes"].astype(str)) if not past_logs.empty else ["Initial contact logged"]
-
-        # Parse scheduled call time & date
-        sched_time_str = str(past_logs.iloc[-1].get("scheduled_call_time", "")) if not past_logs.empty else ""
-        card_date = today_date
-        card_time = datetime.time(17, 0)
-        display_call_badge = "Today @ 05:00 PM"
-        card_slot = "🌆 Evening (04:00 PM - 06:00 PM)"
-
-        if sched_time_str and " " in sched_time_str:
-            try:
-                parsed_dt = datetime.datetime.strptime(sched_time_str, "%Y-%m-%d %H:%M:%S")
-                card_date = parsed_dt.date()
-                card_time = parsed_dt.time()
-                card_slot = get_time_slot_label(card_time)
-                
-                if card_date == today_date:
-                    display_call_badge = f"Today @ {parsed_dt.strftime('%I:%M %p')}"
-                else:
-                    display_call_badge = f"{card_date.strftime('%d %b')} @ {parsed_dt.strftime('%I:%M %p')}"
-            except Exception:
-                pass
-
-        # Apply Date Filter Logic
-        if date_filter == "📅 Today's Scheduled Calls" and card_date != today_date:
-            continue
-        elif date_filter == "⚠️ Overdue Calls" and card_date >= today_date:
-            continue
-        elif date_filter == "📆 Upcoming Calls" and card_date <= today_date:
-            continue
-
-        # Apply Time Slot Filter Logic
-        if slot_filter == "🌅 Morning (9-11 AM)" and card_slot != "🌅 Morning (09:00 AM - 11:00 AM)":
-            continue
-        elif slot_filter == "☀️ Midday (11 AM-1 PM)" and card_slot != "☀️ Midday (11:00 AM - 01:00 PM)":
-            continue
-        elif slot_filter == "🌤️ Afternoon (1-4 PM)" and card_slot != "🌤️ Afternoon (01:00 PM - 04:00 PM)":
-            continue
-        elif slot_filter == "🌆 Evening (4-6 PM)" and card_slot != "🌆 Evening (04:00 PM - 06:00 PM)":
-            continue
-        elif slot_filter == "🌙 Late Evening (> 6 PM)" and card_slot != "🌙 Late Evening (After 06:00 PM)":
-            continue
-
-        rendered_count += 1
-        render_follow_up_card(
-            db_adapter=db_adapter,
-            client_id=cid,
-            client_name=cname,
-            address=addr,
-            city=cty,
-            product=prod,
-            last_price=50000.0,
-            followups_count=log_count,
-            remarks_history=history_remarks,
-            current_user_name=current_user_name,
-            card_slot=card_slot,
-            display_call_badge=display_call_badge,
-            key=f"slot_card_{lead_id}"
-        )
-
-    if rendered_count == 0:
-        st.success(f"🎉 No follow-up reminders matching your search/filter criteria (`{date_filter}`).")
-
-
-def render_follow_up_card(db_adapter, client_id, client_name, address, city, product, last_price, followups_count, remarks_history, current_user_name, card_slot, display_call_badge, key):
-    """Renders an individual follow-up card with time badges and action logging form."""
-    st.markdown(f"""
-    <div class='saas-card'>
-        <div style='display: flex; justify-content: space-between; align-items: center;'>
-            <div>
-                <span style='color: #184B9C; font-weight: 800; font-size: 17px;'>👤 {client_name}</span>
-                <span style='color: #64748B; font-weight: 600; font-size: 13.5px; margin-left: 10px;'>({client_id})</span>
-            </div>
-            <div>
-                <span style='background: #FEF3C7; color: #D97706; padding: 4px 12px; border-radius: 20px; font-weight: 800; font-size: 12px; margin-right: 6px;'>
-                    ⏰ Call: {display_call_badge}
-                </span>
-                <span style='background: #E0F2FE; color: #0369A1; padding: 4px 14px; border-radius: 20px; font-weight: 800; font-size: 12.5px;'>
-                    Follow-up #{followups_count}
-                </span>
-            </div>
-        </div>
-        <div style='margin-top: 8px; color: #334155; font-size: 14px;'>
-            📍 <b>Location:</b> {city}, {address} &nbsp;|&nbsp; 📦 <b>Product:</b> {product} &nbsp;|&nbsp; 💰 <b>Last Price:</b> ₹{last_price:,.0f}
-        </div>
-        <div style='margin-top: 8px; background: #F1F5F9; padding: 10px; border-radius: 8px; font-size: 13px; color: #475569;'>
-            <b>📝 Recent Note:</b> {remarks_history[-1] if remarks_history else "Initial Contact"}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    with st.expander(f"📞 Log Follow-up & Update Call Details for {client_name}", expanded=False):
-        with st.form(key=f"form_{key}"):
-            f_status = st.selectbox("Call Outcome / Status *", ["Choose...", "Under Discussion", "Callback Scheduled", "Won / Order Confirmed", "Lost / Cancelled"], index=0, key=f"stat_{key}")
-            f_notes = st.text_area("Client Conversation Notes *", placeholder="e.g. Client requested callback today at 5 PM...", key=f"notes_{key}")
-            
+    k = f"{key_prefix}_{lead_id}"
+    with st.expander(f"✍️ Log this call — {row['client_name']}", expanded=expanded):
+        with st.form(key=f"fol_form_{k}", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
-                next_date = st.date_input("Next Follow-up Date *", value=datetime.date.today(), key=f"date_{key}")
+                outcome = st.selectbox("Call outcome *", ["Choose..."] + FOLLOWUP_OUTCOMES, key=f"fo_{k}")
             with c2:
-                next_time = st.time_input("Next Follow-up Time *", value=datetime.time(17, 0), key=f"time_{key}")
+                reason = st.selectbox("Cancel reason (required if Cancled)", ["—"] + CANCEL_CATEGORY_OPTIONS, key=f"fr_{k}")
+            notes = st.text_area("What did the client say? *", key=f"fn_{k}",
+                                 placeholder="e.g. Wants revised price for 4 shutters, call back Friday 5 PM")
+            d1, d2 = st.columns(2)
+            with d1:
+                next_date = st.date_input("Next call date", value=today_ist() + datetime.timedelta(days=1),
+                                          key=f"fd_{k}", format="DD/MM/YYYY")
+            with d2:
+                next_time = time_12h("Next call time", key=f"ft_{k}", default=datetime.time(11, 0))
+            st.caption("The next call must be in the future. It is ignored when the outcome is Done or Cancled.")
 
-            submit_fol = st.form_submit_button("✅ Follow-up Done")
-
-            if submit_fol:
-                if f_status == "Choose...":
-                    st.error("Please select a valid Call Outcome / Status.")
-                else:
-                    df_leads = db_adapter.fetch_all("leads_master")
-                    matched_lead = df_leads[df_leads["client_id"] == client_id]
-                    
-                    if not matched_lead.empty:
-                        lead_id = int(matched_lead.iloc[0]["lead_id"])
-                        sched_ts = f"{next_date} {next_time.strftime('%H:%M:%S')}"
-
-                        log_record = {
-                            "lead_id": lead_id,
-                            "employee_id": current_user_name,
-                            "followup_sequence_no": followups_count + 1,
-                            "followup_status": f_status,
-                            "scheduled_call_time": sched_ts,
-                            "notes": f_notes if f_notes else "Follow-up logged."
-                        }
-                        db_adapter.insert_row("followup_logs", log_record)
-
-                        if f_status in ["Won / Order Confirmed", "Lost / Cancelled"]:
-                            new_stat = "Done" if f_status == "Won / Order Confirmed" else "Cancled"
-                            db_adapter.update_row("leads_master", "lead_id", str(lead_id), {"final_status": new_stat})
-
-                        st.toast(f"✅ Follow-up logged for {client_name}! Next call set for {sched_ts}.", icon="🎉")
-                        st.rerun()
+            if st.form_submit_button("Save call log"):
+                if outcome == "Choose...":
+                    st.error("Choose the call outcome.")
+                    return
+                if not notes.strip():
+                    st.error("Add a short note about the call.")
+                    return
+                if outcome == "Cancled" and reason == "—":
+                    st.error("Choose a cancel reason for a cancelled deal.")
+                    return
+                closed = outcome in CLOSED_STAGES
+                next_dt = datetime.datetime.combine(next_date, next_time)
+                if not closed and next_dt <= now_ist().replace(tzinfo=None):
+                    st.error("Pick a next call date and time later than now, so this call leaves your overdue list.")
+                    return
+                sched = None if closed else next_dt.strftime("%Y-%m-%d %H:%M:%S")
+                stamp = now_str()
+                if db_adapter.insert_row("followup_logs", {
+                    "lead_id": lead_id, "quotation_id": quote["quotation_id"] if quote is not None else None,
+                    "employee_id": current_user["employee_id"], "followup_sequence_no": len(logs) + 1,
+                    "followup_status": outcome, "cancel_category": reason if outcome == "Cancled" else None,
+                    "scheduled_call_time": sched, "notes": notes.strip(), "logged_at": stamp,
+                }) is None:
+                    st.error(db_adapter.last_error)
+                    return
+                if not db_adapter.update_row("leads_master", "lead_id", lead_id, {
+                    "final_status": outcome, "next_followup_at": sched,
+                    "lost_reason": reason if outcome == "Cancled" else None,
+                    "closed_at": stamp if closed else None, "updated_at": stamp,
+                }):
+                    st.error(db_adapter.last_error)
+                    return
+                st.toast(f"Call saved for {row['client_name']}." +
+                         (f" Next call {next_dt.strftime('%d %b, %I:%M %p')}." if sched else f" Lead marked {outcome}."),
+                         icon="✅")
+                st.rerun(scope="app")

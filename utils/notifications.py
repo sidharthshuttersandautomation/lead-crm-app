@@ -1,63 +1,71 @@
-from datetime import datetime
+"""utils/notifications.py - What needs the signed-in user's attention right now."""
+import pandas as pd
 
-def get_user_reminders(db, user: dict) -> list[dict]:
-    reminders = []
-    user_role = user.get("role")
-    user_name = user.get("name")
+from config.settings import APPROVER_ROLES, COLLECTION_ROLES
+from utils.metrics import call_bucket, latest_quotes, open_leads
+from utils.queues import call_queue
+from utils.time_utils import today_ist
 
-    # 1. Scheduled Call Alerts
-    df_follow = db.fetch_all("followup_tracker")
-    if not df_follow.empty and "scheduled_call_time" in df_follow.columns:
-        now_str = datetime.now().strftime("%Y-%m-%d")
-        todays_calls = df_follow[
-            df_follow["scheduled_call_time"].astype(str).str.contains(now_str, na=False)
-        ]
 
-        if user_role == "SAM":
-            todays_calls = todays_calls[
-                todays_calls["quotation_follow_up_by"] == user_name
-            ]
+def collect_alerts(db, user: dict, owner_filter: str = None) -> dict:
+    """
+    Returns dataframes keyed by alert type. owner_filter: employee_id (admin view
+    of one person), or None = the signed-in user (admins: everyone).
+    """
+    role, emp_id = user.get("role"), user.get("employee_id")
+    is_admin = role == "ADMIN"
+    who = owner_filter or (None if is_admin else emp_id)
+    empty = pd.DataFrame()
+    out = {k: empty for k in ("overdue", "today", "my_tickets", "unclaimed", "approvals", "revisions",
+                              "collect_overdue", "collect_today", "deliveries", "verify")}
 
-        for _, row in todays_calls.iterrows():
-            reminders.append(
-                {
-                    "type": "CALL_REMINDER",
-                    "title": f"Scheduled Call: Client {row.get('client_id')}",
-                    "message": f"Follow-up scheduled for {row.get('scheduled_call_time')} | Notes: {row.get('notes', 'N/A')}",
-                    "severity": "info",
-                }
-            )
+    leads = db.fetch_all("leads_master")
+    if not leads.empty:
+        active = open_leads(leads)
+        mine = call_queue(leads, user, owner_filter)
+        if not mine.empty:
+            buckets = mine["next_followup_at"].map(call_bucket)
+            out["overdue"] = mine[buckets == "overdue"]
+            out["today"] = mine[buckets == "today"]
+        if role in ("QS", "ADMIN"):
+            pending = active[active["quotation_status"] != "Sent"]
+            qs = who if who else None
+            out["my_tickets"] = pending[pending["claimed_qs_id"] == qs] if qs else pending[pending["claimed_qs_id"].notna()]
+            out["unclaimed"] = pending[pending["claimed_qs_id"].isna()]
 
-    # 2. Quotation Desk Revisions & Overnight Queue Alerts
-    if user_role in ["QS", "ADMIN"]:
-        df_quotes = db.fetch_all("quotation_sheet")
-        if not df_quotes.empty:
-            pending = df_quotes[df_quotes["quotation_status"] == "Pending"]
-            if user_role == "QS":
-                pending = pending[
-                    (pending["assigned_qs_id"] == user_name)
-                    | (pending["assigned_qs_id"] == "")
-                ]
+    lq = latest_quotes(db.fetch_all("quotations_master")) if role in APPROVER_ROLES + ["QS"] else pd.DataFrame()
+    if role in ("QS", "ADMIN") and not lq.empty:
+        back = lq[((lq["revision_requested"] == 1) | (lq["quotation_status"] == "Rejected"))
+                  & ~lq["final_status"].isin(["Done", "Cancled"])]
+        if role == "QS":
+            back = back[back["claimed_qs_id"] == emp_id]
+        elif who:
+            back = back[back["claimed_qs_id"] == who]
+        out["revisions"] = back
+    if role in APPROVER_ROLES:
+        if not lq.empty:
+            waiting = lq[(lq["quotation_status"] == "Under Review") & ~lq["final_status"].isin(["Done", "Cancled"])]
+            if role == "SAM":
+                waiting = waiting[waiting["assigned_sam_id"] == emp_id]
+            elif who:
+                waiting = waiting[waiting["assigned_sam_id"] == who]
+            out["approvals"] = waiting
 
-            for _, row in pending.iterrows():
-                rev = int(row.get("revised_count", 0))
-                if rev > 0:
-                    reminders.append(
-                        {
-                            "type": "REVISION_ALERT",
-                            "title": f"REVISION #{rev}: Client {row.get('client_id')}",
-                            "message": f"Revision requested by {row.get('quotation_shared_by', 'SAM')}",
-                            "severity": "warning",
-                        }
-                    )
-                elif row.get("is_after_cutoff"):
-                    reminders.append(
-                        {
-                            "type": "OVERNIGHT_SLA",
-                            "title": f"Overnight Queue: Client {row.get('client_id')}",
-                            "message": f"Submitted after 5:30 PM. Target: {row.get('target_completion_date')}",
-                            "severity": "error",
-                        }
-                    )
+    from views.po_portal import can_use_po
+    if can_use_po(user):
+        from utils.payment_plan import payment_alerts
+        orders = db.fetch_all("orders")
+        mine = None if role == "ADMIN" and not owner_filter else (owner_filter or emp_id)
+        pa = payment_alerts(orders, mine)
+        out["collect_overdue"], out["collect_today"] = pa["calls_overdue"], pa["calls_today"]
+        out["deliveries"], out["verify"] = pa["deliveries"], pa["verify"]
+    return out
 
-    return reminders
+
+def alert_badge_counts(db, user: dict) -> tuple:
+    """(follow-up alerts, quotation alerts, collection alerts) for the sidebar badges."""
+    a = collect_alerts(db, user)
+    follow = len(a["overdue"]) + len(a["today"])
+    quote = len(a["approvals"]) + len(a["revisions"]) + (len(a["my_tickets"]) + len(a["unclaimed"]) if user.get("role") == "QS" else 0)
+    collect = len(a["collect_overdue"]) + len(a["collect_today"]) + len(a["deliveries"]) + len(a["verify"])
+    return follow, quote, collect

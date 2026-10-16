@@ -1,5 +1,5 @@
 """
-app.py - Main Router with Exact Admin Workspace Navigation Hierarchy.
+app.py - Sidharth Shutter CRM: sign-in and role-based navigation.
 """
 import sys
 from pathlib import Path
@@ -9,153 +9,169 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 import streamlit as st
-from components.styles import apply_custom_theme
-from database.sqlite_adapter import SQLiteAdapter
-from utils.auth import init_session_auth, get_current_user, login_user, logout_user
+
+st.set_page_config(page_title="Sidharth Shutter CRM", page_icon="🏢", layout="wide",
+                   initial_sidebar_state="expanded")
+
+from components.call_reminder import render_call_reminders
+from components.desktop_notify import permission_control
 from components.navbar import render_navbar
-
-from views.lead_portal import render_lead_portal
-from views.quotation_portal import (
-    render_qs_performance_dashboard,
-    render_qs_generator_and_claim,
-    render_qs_detailed_form_entry,
-    render_qs_followup_workday,
-)
-from views.employee_progress import render_my_progress_report
-from views.sales_portal import render_sales_portal
-from views.process_order_portal import render_process_portal
+from components.styles import apply_custom_theme
+from config.settings import LOGO_PATH, ROLE_DESCRIPTIONS
+from database.factory import bootstrap_database, get_adapter, secrets_status
+from utils.auth import get_current_user, init_session_auth, login_user, logout_user
+from views.account import render_account
+from views.accounts_portal import render_collections_portal
+from utils.notifications import alert_badge_counts
+from views.admin_portal import render_audit_log, render_user_management
 from views.client_inspector import render_client_inspector
-from views.admin_portal import render_admin_portal, render_user_management
+from views.data_import import render_data_import
+from views.po_portal import can_use_po, render_po_portal
+from views.admin_quotes import render_admin_quote_desk, render_quote_register
+from views.employee_progress import render_my_progress_report
 from views.employee_report import render_employee_report
-
-st.set_page_config(
-    page_title="Sidharth Shutter CRM",
-    page_icon="🏢",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+from views.lead_portal import render_lead_portal
+from views.management import (render_business_tower, render_master_export, render_reassign_escalate,
+                              render_team_performance)
+from views.notification_center import render_notification_center
+from views.process_order_portal import render_process_portal
+from views.quotation_portal import (render_qs_detailed_form_entry, render_qs_followup_workday,
+                                    render_qs_generator_and_claim, render_qs_performance_dashboard)
+from views.sales_portal import render_sales_portal
 
 apply_custom_theme()
 
-db_adapter = SQLiteAdapter()
+# One adapter per script run; bootstrap (tables, products, first admin) runs once per server.
+db_adapter = get_adapter()
+bootstrap_database(db_adapter.db_path)
 init_session_auth()
 
-if not st.session_state.get("authenticated", False):
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    c_left, c_center, c_right = st.columns([1, 1.6, 1])
 
-    with c_center:
-        st.markdown("<div class='saas-card' style='text-align: center; padding: 30px;'>", unsafe_allow_html=True)
-        try:
-            st.image("Company Logo.jpeg", width="stretch")
-        except Exception:
-            st.markdown("<h2 style='color: #184B9C; font-weight: 800; margin-bottom: 0;'>SIDHARTH SHUTTER</h2>", unsafe_allow_html=True)
+def show_logo():
+    if Path(ROOT_DIR / LOGO_PATH).exists():
+        st.image(str(ROOT_DIR / LOGO_PATH), width="stretch")
+    else:
+        st.markdown("<h3 style='color:#184B9C; font-weight:800; margin:0;'>SIDHARTH SHUTTER</h3>",
+                    unsafe_allow_html=True)
 
-        st.markdown("<p style='color: #64748B; font-weight: 600; font-size: 14px; margin-bottom: 25px;'>Enterprise CRM & Operations Portal</p>", unsafe_allow_html=True)
 
-        with st.form("centered_login_form"):
-            username_input = st.text_input("Username / Email", placeholder="e.g. admin, pooja, or albert").strip().lower()
-            password_input = st.text_input("Password", type="password", placeholder="Enter account password").strip()
-
-            submit_login = st.form_submit_button("LOGIN TO DASHBOARD")
-
-            if submit_login:
-                if login_user(db_adapter, username_input, password_input):
-                    st.success("Login Successful!")
-                    st.rerun()
-                else:
-                    st.error("Invalid credentials. Try admin / admin123")
-
-        st.markdown("</div>", unsafe_allow_html=True)
+# ------------------------------------------------------------------ sign-in
+if not st.session_state.get("authenticated"):
+    from views.login import render_login
+    render_login(db_adapter, ROOT_DIR)
     st.stop()
 
+# ------------------------------------------------------------------ signed in
 user = get_current_user()
+db_adapter.set_actor(user["employee_id"])
 render_navbar(user)
+render_call_reminders(db_adapter, user)
 
-user_name = user.get("name") or "User"
-user_role = str(user.get("role", "LGE")).upper()
+role = user["role"]
+initials = "".join(p[0].upper() for p in user["name"].split()[:2]) or "U"
 
-ROLE_DESCRIPTIONS = {
-    "LGE": "Lead Generation Executive",
-    "QS": "Quotation Specialist",
-    "SAM": "Sales Account Manager",
-    "ADMIN": "CRM Administrator",
-    "OPERATIONS": "Operations Specialist"
+try:
+    _f, _q, _c = alert_badge_counts(db_adapter, user)
+    _badge = " ".join(x for x in [f"📞{_f}" if _f else "", f"📄{_q}" if _q else "", f"💰{_c}" if _c else ""] if x)
+except Exception:
+    _badge = ""
+ALERTS = ("🔔 Alerts", render_notification_center)
+COLLECTIONS = ("💰 Sales & collections", render_collections_portal)
+PROGRESS = ("📊 My progress", render_my_progress_report)
+INSPECTOR = ("🔍 Client inspector", render_client_inspector)
+ACCOUNT = ("🔑 My account", render_account)
+FOLLOWUPS = ("📞 Follow-up calls", render_qs_followup_workday)
+
+def grouped(title, items, key):
+    """A main-menu entry whose page shows its own sub-tabs (only the chosen sub-tab is loaded)."""
+    names = [n for n, _ in items]
+    funcs = dict(items)
+
+    def page(db, usr):
+        sub = st.segmented_control(title, names, key=key, label_visibility="collapsed",
+                                   default=None if key in st.session_state else names[0]) or names[0]
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+        funcs[sub](db, usr)
+    page.sub_pages = names
+    page.sub_key = key
+    return title, page
+
+
+ADMIN_GROUPS = [
+    grouped("🏁 Overview", [("🏁 Business tower", render_business_tower), ("👥 Team performance", render_team_performance),
+                           ("📈 Employee report card", render_employee_report)], "sub_overview"),
+    ALERTS,
+    grouped("👥 Leads & clients", [("🔍 Client inspector", render_client_inspector), ("📥 Add new lead", render_lead_portal),
+                                  FOLLOWUPS, ("🔀 Reassign & escalate", render_reassign_escalate)], "sub_leads"),
+    grouped("📄 Quotations", [("📋 Quotation desk", render_admin_quote_desk), ("📄 Quotation register", render_quote_register)],
+            "sub_quotes"),
+    grouped("💼 Sales & money", [("💼 Sales pipeline", render_sales_portal), COLLECTIONS, ("🧾 PO & payments", render_po_portal),
+                                ("⚙️ Order fulfilment", render_process_portal)], "sub_money"),
+    grouped("⚙️ Admin tools", [("🔐 Users", render_user_management), ("🧾 Audit trail", render_audit_log),
+                              ("📦 Master export & backup", render_master_export), ("📤 Import from Excel", render_data_import)],
+            "sub_tools"),
+    ACCOUNT,
+]
+
+NAV = {
+    "ADMIN": ADMIN_GROUPS,
+    "QS": [
+        ("📋 Quotation desk", render_qs_performance_dashboard), ALERTS,
+        ("📄 Claim & create quotations", render_qs_generator_and_claim),
+        ("📝 Quotation entry & revisions", render_qs_detailed_form_entry),
+        FOLLOWUPS, ("📥 Add new lead", render_lead_portal), INSPECTOR, PROGRESS, ACCOUNT,
+    ],
+    "LGE": [("📥 Add new lead", render_lead_portal), ALERTS, FOLLOWUPS, INSPECTOR, PROGRESS, ACCOUNT],
+    "SAM": [("💼 Sales pipeline", render_sales_portal), ALERTS, FOLLOWUPS, INSPECTOR, PROGRESS, ACCOUNT],
+    "OPERATIONS": [("⚙️ Order fulfilment", render_process_portal), ALERTS, INSPECTOR, PROGRESS, ACCOUNT],
+    "PO": [("🧾 PO & payments", render_po_portal), ALERTS, ("💰 Collections", render_collections_portal),
+           PROGRESS, ACCOUNT],
+    "ACCOUNTS": [("💰 Collections", render_collections_portal), ALERTS, ("⚙️ Orders", render_process_portal),
+                 INSPECTOR, PROGRESS, ACCOUNT],
 }
-role_display = ROLE_DESCRIPTIONS.get(user_role, user_role)
-initials = "".join([p[0].upper() for p in user_name.strip().split()[:2]]) if user_name else "U"
+nav_items = list(NAV.get(role, [ALERTS, ACCOUNT]))
+# extra access given in Users: team leads reassign, PO handlers get the PO desk
+if user.get("is_team_lead") and role != "ADMIN":
+    nav_items.insert(2, ("🔀 Reassign & escalate", render_reassign_escalate))
+views = dict(nav_items)
+
+# "Log this call" from a reminder jumps to the follow-up page filtered to that client
+# Buttons elsewhere ("Log this call", "Go to the quote") ask to open a page with some widget values preset.
+if "goto" in st.session_state:
+    request = st.session_state.pop("goto")
+    target = request.get("page")
+    found = target in views
+    if found:
+        st.session_state["nav_page"] = target
+    else:  # a sub-tab inside one of the admin's grouped pages
+        for name, fn in views.items():
+            if target in getattr(fn, "sub_pages", []):
+                st.session_state["nav_page"] = name
+                st.session_state[fn.sub_key] = target
+                found = True
+                break
+    if found:
+        for key, value in request.items():
+            if key != "page":
+                st.session_state[key] = value
 
 with st.sidebar:
-    st.markdown("<div style='background-color: #FFFFFF; padding: 12px; border-radius: 12px; margin-bottom: 15px; text-align: center;'>", unsafe_allow_html=True)
-    try:
-        st.image("Company Logo.jpeg", width="stretch")
-    except Exception:
-        st.markdown("<h3 style='color:#184B9C; font-weight:800; margin:0;'>SIDHARTH SHUTTER</h3>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
+    show_logo()
     st.markdown(f"""
-        <div style='background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 12px; padding: 12px 14px; margin-bottom: 20px; display: flex; align-items: center; gap: 12px;'>
-            <div style='background: linear-gradient(135deg, #00A859 0%, #008F4C 100%); color: #FFFFFF; font-weight: 800; font-size: 15px; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0;'>
-                {initials}
-            </div>
+        <div style='background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.18); border-radius:12px; padding:12px 14px; margin-bottom:20px; display:flex; align-items:center; gap:12px;'>
+            <div style='background:#00A859; font-weight:800; font-size:15px; width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-shrink:0;'>{initials}</div>
             <div>
-                <div style='color: #FFFFFF; font-size: 14.5px; font-weight: 700;'>{user_name}</div>
-                <div style='color: #00A859; font-size: 11px; font-weight: 700; text-transform: uppercase;'>{role_display}</div>
+                <div style='font-size:14.5px; font-weight:700;'>{st.session_state['user']['name']}</div>
+                <div style='font-size:11.5px; font-weight:700;'>{ROLE_DESCRIPTIONS.get(role, role)}</div>
             </div>
-        </div>
-    """, unsafe_allow_html=True)
+        </div>""", unsafe_allow_html=True)
 
-    available_views = {}
-    if user_role in ["ADMIN", "ADMINISTRATOR"]:
-        # EXACT ORDER FOR ADMIN PORTAL
-        available_views["🛡️ Admin Control Center"] = render_admin_portal
-        available_views["📊 My Progress Report"] = render_my_progress_report
-        available_views["📥 Lead Generation Portal"] = render_lead_portal
-        available_views["📈 Performance & Progress Control"] = render_qs_performance_dashboard
-        available_views["📄 Quotation Generator & Convert"] = render_qs_generator_and_claim
-        available_views["📝 Detailed Quotation Form Entry"] = render_qs_detailed_form_entry
-        available_views["⚡ Follow-up Queue & Workday"] = render_qs_followup_workday
-        available_views["💼 Sales Management Portal"] = render_sales_portal
-        available_views["⚙️ Order Fulfillment"] = render_process_portal
-        available_views["📊 Employee Report Card"] = render_employee_report
-        available_views["👥 User Management"] = render_user_management
-        available_views["🔍 Client Inspector"] = render_client_inspector
-
-    elif user_role in ["QS"]:
-        available_views["📊 Quotation Control & Inbound Desk"] = render_qs_performance_dashboard
-        available_views["📥 Add New Lead"] = render_lead_portal
-        available_views["📄 Quotation Generator & Convert"] = render_qs_generator_and_claim
-        available_views["📝 Detailed Quotation Form Entry"] = render_qs_detailed_form_entry
-        available_views["⚡ Follow-up Queue & Workday"] = render_qs_followup_workday
-        available_views["🔍 Client Inspector"] = render_client_inspector
-        available_views["📊 My Progress Report"] = render_my_progress_report
-
-    elif user_role in ["LGE"]:
-        available_views["📥 Lead Generation Portal"] = render_lead_portal
-        available_views["⚡ Follow-up Queue & Workday"] = render_qs_followup_workday
-        available_views["🔍 Client Inspector"] = render_client_inspector
-        available_views["📊 My Progress Report"] = render_my_progress_report
-
-    elif user_role in ["SAM"]:
-        available_views["💼 Sales Management Portal"] = render_sales_portal
-        available_views["🔍 Client Inspector"] = render_client_inspector
-        available_views["📊 My Progress Report"] = render_my_progress_report
-
-    elif user_role in ["OPERATIONS"]:
-        available_views["⚙️ Order Fulfillment"] = render_process_portal
-        available_views["🔍 Client Inspector"] = render_client_inspector
-        available_views["📊 My Progress Report"] = render_my_progress_report
-
-    else:
-        available_views["🛡️ Admin Control Center"] = render_admin_portal
-
-    selected_view_name = st.sidebar.radio("WORKSPACE NAVIGATION", list(available_views.keys()))
-
-    st.markdown("<br><hr style='border:none; border-top:1px solid rgba(255,255,255,0.15); margin-bottom: 12px;'>", unsafe_allow_html=True)
-
-    if st.sidebar.button("🚪 Logout", width="stretch", key="single_app_logout_btn"):
-        logout_user()
+    permission_control()
+    selected = st.radio("Menu", list(views.keys()), label_visibility="collapsed", key="nav_page",
+                        format_func=lambda k: f"{k}  ·  {_badge}" if k == ALERTS[0] and _badge else k)
+    st.markdown("<hr style='border:none; border-top:1px solid rgba(255,255,255,0.15);'>", unsafe_allow_html=True)
+    if st.button("Sign out", width="stretch"):
+        logout_user(db_adapter)
         st.rerun()
 
-if selected_view_name in available_views:
-    available_views[selected_view_name](db_adapter, user)
+views[selected](db_adapter, user)

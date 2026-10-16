@@ -1,17 +1,21 @@
 [theme]
+base = "light"
 primaryColor = "#184B9C"
 backgroundColor = "#F8FAFC"
-secondaryBackgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F1F5FB"
+borderColor = "#C9D6EE"
+showWidgetBorder = true
+baseRadius = "10px"
 textColor = "#0E2C68"
 font = "sans serif"
 
 [server]
 headless = true
-enableCORS = false
-enableXsrfProtection = false
+# CORS and XSRF protection stay ON (Streamlit defaults). Do not disable them.
 
 [client]
-showErrorDetails = true
+showErrorDetails = false
+toolbarMode = "minimal"
 
-[ui]
-hideTopBar = true
+[browser]
+gatherUsageStats = false
